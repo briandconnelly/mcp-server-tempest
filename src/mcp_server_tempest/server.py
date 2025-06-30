@@ -1,10 +1,10 @@
 import os
+from typing import Annotated, Any, Dict, List, Optional
 
 import httpx
 from fastmcp import FastMCP
-from typing import Optional, Dict, Any, List
+from fastmcp.exceptions import ToolError
 from pydantic import Field
-from typing import Annotated
 
 # Create the MCP server
 mcp = FastMCP(name="WeatherFlow Tempest API Server")
@@ -42,6 +42,9 @@ async def get_better_forecast(
 
     token = os.getenv("WEATHERFLOW_API_TOKEN")
 
+    if not token:
+        raise ToolError("No API token found")
+
     try:
         params = {
             "station_id": station_id,
@@ -65,14 +68,27 @@ async def get_better_forecast(
 
 @mcp.tool
 async def get_station_observations(
-    station_id: int,
+    device_id: int,
     time_start: Optional[int] = None,
     time_end: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Get current and recent observations from a WeatherFlow station.
-    A user's station_id values can be determined by calling get_stations()
+    A station has one or more devices, which are identified by device_id.
+    A user's station_id and device_idvalues can be determined by calling get_stations().
 
+    Not all devices are weather sensors.
+    Weather devices can be identified by `device_type` (station is "ST"), will typically
+    be labeled as "outdoor" in the device_meta metadata, and will provide
+    weather-related measurements.
+
+    A user may or not be geographically located near a station.
+    If the user asks for a weather forecast without specifying that the station
+    should be used, first determine the location of the user. This information can
+    be used to determine whether or not they are near the weather station.
+    If there is some ambiguity about the user's location, you can include information about the weather station's location or ask the user if they would like to retrieve information from their weather station.
+
+    If memory is available, remember current observations so that they can be compared against past and future observations to detect and interpret trends.
     Args:
         station_id: The station ID to get observations from
         token: Your WeatherFlow API token
@@ -82,15 +98,18 @@ async def get_station_observations(
 
     token = os.getenv("WEATHERFLOW_API_TOKEN")
 
+    if not token:
+        raise ToolError("No API token found")
+
     try:
-        params = {"station_id": station_id, "token": token}
+        params = {"device_id": device_id, "token": token}
 
         if time_start:
             params["time_start"] = time_start
         if time_end:
             params["time_end"] = time_end
 
-        response = await client.get("/observations/station/{station_id}", params=params)
+        response = await client.get(f"/observations/device/{device_id}", params=params)
         response.raise_for_status()
         return response.json()
 
@@ -112,6 +131,9 @@ async def get_stations_by_device_id(device_id: List[int]) -> Dict[str, Any]:
 
     token = os.getenv("WEATHERFLOW_API_TOKEN")
 
+    if not token:
+        raise ToolError("No API token found")
+
     try:
         # Convert list to comma-separated string
         device_ids_str = ",".join(map(str, device_id))
@@ -132,10 +154,16 @@ async def get_stations_by_device_id(device_id: List[int]) -> Dict[str, Any]:
 async def get_stations() -> Dict[str, Any]:
     """
     Retrieve a list of your stations along with all connected devices
-
+    Get station metadata and metadata for the Devices in it. Each user
+    can create multiple Stations. A Device can only be in one Station at a
+    time. Only devices with a serial_number value can send new observations.
+    A Device wihout a serial_number indicates that Device is no longer active.
     """
 
     token = os.getenv("WEATHERFLOW_API_TOKEN")
+
+    if not token:
+        raise ToolError("No API token found")
 
     try:
         params = {"token": token}
@@ -154,13 +182,16 @@ async def get_stations() -> Dict[str, Any]:
 async def get_station_metadata(station_id: int) -> Dict[str, Any]:
     """
     Get detailed metadata for a specific station including location and device info.
-    A user's station_id values can be determined by calling get_stations()
+    A user's station_id values can be determined by calling get_stations().
 
     Args:
         station_id: The station ID to get metadata for
     """
 
     token = os.getenv("WEATHERFLOW_API_TOKEN")
+
+    if not token:
+        raise ToolError("No API token found")
 
     try:
         params = {"station_id": station_id, "token": token}
@@ -182,14 +213,15 @@ def get_api_help() -> str:
     return """
 WeatherFlow Tempest API MCP Server
 
-This server provides access to WeatherFlow's weather data through the following tools:
+This server provides access to WeatherFlow's remoteweather data through
+the following tools:
 
 1. get_better_forecast: Get detailed weather forecast
    - Requires: station_id
    - Optional: unit preferences for temperature, wind, pressure, etc.
 
 2. get_station_observations: Get current/recent weather observations
-   - Requires: station_id
+   - Requires: device_id
    - Optional: time_start, time_end for historical data
 
 3. get_stations_by_device_id: Find stations by device IDs
@@ -230,7 +262,7 @@ def get_forecast_example() -> str:
 Example: Getting a Weather Forecast
 
 To get a forecast for a station, you'll need:
-1. A station_id (find this from your WeatherFlow account or device)
+1. A station_id (find this from your WeatherFlow account or device). You can also get this by calling get_stations().
 
 Example call:
 get_better_forecast(
