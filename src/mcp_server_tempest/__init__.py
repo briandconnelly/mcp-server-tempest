@@ -1,7 +1,6 @@
 from .server import (
     get_api_help,
     get_better_forecast,
-    get_station_metadata,
     get_station_observations,
     get_station_summary,
     get_stations_by_device_id,
@@ -12,7 +11,6 @@ from .server import (
 __all__ = [
     "get_api_help",
     "get_better_forecast",
-    "get_station_metadata",
     "get_station_observations",
     "get_station_summary",
     "get_stations_by_device_id",

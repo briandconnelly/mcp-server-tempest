@@ -179,34 +179,6 @@ async def get_stations() -> Dict[str, Any]:
         return {"error": f"Request failed: {str(e)}"}
 
 
-@mcp.tool
-async def get_station_metadata(station_id: int) -> Dict[str, Any]:
-    """
-    Get detailed metadata for a specific station including location and device info.
-    A user's station_id values can be determined by calling get_stations().
-
-    Args:
-        station_id: The station ID to get metadata for
-    """
-
-    token = os.getenv("WEATHERFLOW_API_TOKEN")
-
-    if not token:
-        raise ToolError("No API token found")
-
-    try:
-        params = {"station_id": station_id, "token": token}
-
-        response = await client.get(f"/stations/{station_id}", params=params)
-        response.raise_for_status()
-        return response.json()
-
-    except httpx.HTTPStatusError as e:
-        return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
-    except Exception as e:
-        return {"error": f"Request failed: {str(e)}"}
-
-
 # Resource to provide API documentation and help
 @mcp.resource("tempest://api/help")
 def get_api_help() -> str:
@@ -244,10 +216,28 @@ Unit Options:
 
 
 @mcp.tool
-async def get_station_summary() -> Dict[str, Any]:
+async def get_station_summary(
+    get_observations: Annotated[
+        bool,
+        Field(
+            description="Whether to fetch current weather observations for each station. "
+            "Set to False for faster response when only station metadata is needed."
+        ),
+    ] = True,
+) -> Dict[str, Any]:
     """
-    Get a comprehensive overview of all your WeatherFlow stations with current status.
+    Get a comprehensive overview of all your WeatherFlow stations including
+    their metadata, devices, and device metadata. Current weather observations
+    can also be included.
     Provides a dashboard-like view of all your weather monitoring equipment.
+
+    Each user can create multiple Stations. A Device can only be in one Station at a
+    time. Only devices with a serial_number value can send new observations.
+    A Device wihout a serial_number indicates that Device is no longer active.
+
+    Args:
+        get_observations: If True, includes current weather conditions for each station.
+                         If False, returns only station metadata and device information.
     """
     token = os.getenv("WEATHERFLOW_API_TOKEN")
 
@@ -278,9 +268,9 @@ async def get_station_summary() -> Dict[str, Any]:
             total_devices += len(devices)
             active_devices += len(station_active_devices)
 
-            # Try to get current conditions if we have weather devices
+            # Try to get current conditions if requested and we have weather devices
             current_conditions = None
-            if station_weather_devices:
+            if get_observations and station_weather_devices:
                 try:
                     device_id = station_weather_devices[0]["device_id"]
                     obs_params = {"device_id": device_id, "token": token}
@@ -302,8 +292,11 @@ async def get_station_summary() -> Dict[str, Any]:
                                     last_obs[0], timezone.utc
                                 ).strftime("%Y-%m-%d %H:%M UTC"),
                             }
-                except:
-                    raise ToolError("Failed to get current conditions")
+                except Exception as obs_error:
+                    # Log the error but continue with other stations
+                    current_conditions = {
+                        "error": f"Failed to fetch observations: {str(obs_error)}"
+                    }
 
             station_info = {
                 "station_id": station["station_id"],
@@ -328,12 +321,15 @@ async def get_station_summary() -> Dict[str, Any]:
                     for device in devices
                 ],
                 "public": station.get("public", False),
-                "current_conditions": current_conditions,
             }
+
+            # Only include current_conditions if observations were requested
+            if get_observations:
+                station_info["current_conditions"] = current_conditions
 
             station_summary.append(station_info)
 
-        return {
+        result = {
             "total_stations": len(data["stations"]),
             "total_devices": total_devices,
             "active_devices": active_devices,
@@ -348,6 +344,14 @@ async def get_station_summary() -> Dict[str, Any]:
                 ),
             },
         }
+
+        # Add a note about observations if they weren't requested
+        if not get_observations:
+            result["note"] = (
+                "Current weather observations not included. Set get_observations=True to include them."
+            )
+
+        return result
 
     except httpx.HTTPStatusError as e:
         return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
