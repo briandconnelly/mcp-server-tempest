@@ -1,5 +1,6 @@
 import os
 from typing import Annotated, Any, Dict, List, Optional
+from datetime import datetime, timezone
 
 import httpx
 from fastmcp import FastMCP
@@ -240,6 +241,118 @@ Unit Options:
 - Precipitation: mm (millimeters), in (inches)
 - Distance: km (kilometers), mi (miles)
 """
+
+
+@mcp.tool
+async def get_station_summary() -> Dict[str, Any]:
+    """
+    Get a comprehensive overview of all your WeatherFlow stations with current status.
+    Provides a dashboard-like view of all your weather monitoring equipment.
+    """
+    token = os.getenv("WEATHERFLOW_API_TOKEN")
+
+    if not token:
+        raise ToolError("No API token found")
+
+    try:
+        # Get all stations
+        params = {"token": token}
+        response = await client.get("/stations/", params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        if not data.get("stations"):
+            return {"message": "No stations found in your account"}
+
+        station_summary = []
+        total_devices = 0
+        active_devices = 0
+
+        for station in data["stations"]:
+            devices = station.get("devices", [])
+            station_active_devices = [d for d in devices if d.get("serial_number")]
+            station_weather_devices = [
+                d for d in station_active_devices if d.get("device_type") == "ST"
+            ]
+
+            total_devices += len(devices)
+            active_devices += len(station_active_devices)
+
+            # Try to get current conditions if we have weather devices
+            current_conditions = None
+            if station_weather_devices:
+                try:
+                    device_id = station_weather_devices[0]["device_id"]
+                    obs_params = {"device_id": device_id, "token": token}
+                    obs_response = await client.get(
+                        f"/observations/device/{device_id}", params=obs_params
+                    )
+
+                    if obs_response.status_code == 200:
+                        obs_data = obs_response.json()
+                        latest_obs = obs_data.get("obs", [])
+                        if latest_obs:
+                            last_obs = latest_obs[-1]
+                            current_conditions = {
+                                "temperature": last_obs[7],  # air_temperature
+                                "humidity": last_obs[8],  # relative_humidity
+                                "wind_speed": last_obs[2],  # wind_avg
+                                "pressure": last_obs[6],  # station_pressure
+                                "last_update": datetime.fromtimestamp(
+                                    last_obs[0], timezone.utc
+                                ).strftime("%Y-%m-%d %H:%M UTC"),
+                            }
+                except:
+                    raise ToolError("Failed to get current conditions")
+
+            station_info = {
+                "station_id": station["station_id"],
+                "name": station.get("name", "Unnamed Station"),
+                "location": {
+                    "latitude": station.get("latitude"),
+                    "longitude": station.get("longitude"),
+                    "elevation": station.get("station_meta", {}).get("elevation"),
+                },
+                "devices": {
+                    "total": len(devices),
+                    "active": len(station_active_devices),
+                    "weather_sensors": len(station_weather_devices),
+                },
+                "device_list": [
+                    {
+                        "device_id": device["device_id"],
+                        "type": device.get("device_type", "Unknown"),
+                        "active": bool(device.get("serial_number")),
+                        "meta": device.get("device_meta", {}),
+                    }
+                    for device in devices
+                ],
+                "public": station.get("public", False),
+                "current_conditions": current_conditions,
+            }
+
+            station_summary.append(station_info)
+
+        return {
+            "total_stations": len(data["stations"]),
+            "total_devices": total_devices,
+            "active_devices": active_devices,
+            "stations": station_summary,
+            "account_summary": {
+                "has_weather_data": any(
+                    s["devices"]["weather_sensors"] > 0 for s in station_summary
+                ),
+                "public_stations": len([s for s in station_summary if s["public"]]),
+                "private_stations": len(
+                    [s for s in station_summary if not s["public"]]
+                ),
+            },
+        }
+
+    except httpx.HTTPStatusError as e:
+        return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+    except Exception as e:
+        return {"error": f"Request failed: {str(e)}"}
 
 
 @mcp.resource("tempest://config/units")
