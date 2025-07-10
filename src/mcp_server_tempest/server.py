@@ -1,9 +1,9 @@
 import os
-from typing import Annotated, Any, Dict, List, Optional
 from datetime import datetime, timezone
+from typing import Annotated, Any, Dict, List, Optional
 
 import httpx
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
@@ -27,6 +27,7 @@ async def get_better_forecast(
     units_distance: Annotated[
         str, Field(description="Distance/visibility units")
     ] = "mi",
+    ctx: Context = None,
 ) -> Dict[str, Any]:
     """
     Get detailed weather forecast for a specific WeatherFlow station.
@@ -72,6 +73,7 @@ async def get_station_observations(
     device_id: int,
     time_start: Optional[int] = None,
     time_end: Optional[int] = None,
+    ctx: Context = None,
 ) -> Dict[str, Any]:
     """
     Get current and recent observations from a WeatherFlow station.
@@ -121,7 +123,9 @@ async def get_station_observations(
 
 
 @mcp.tool
-async def get_stations_by_device_id(device_id: List[int]) -> Dict[str, Any]:
+async def get_stations_by_device_id(
+    device_id: List[int], ctx: Context = None
+) -> Dict[str, Any]:
     """
     Get station information by device IDs.
     A user's station_id values can be determined by calling get_stations().
@@ -152,7 +156,7 @@ async def get_stations_by_device_id(device_id: List[int]) -> Dict[str, Any]:
 
 
 @mcp.tool
-async def get_stations() -> Dict[str, Any]:
+async def get_stations(ctx: Context = None) -> Dict[str, Any]:
     """
     Retrieve a list of your stations along with all connected devices
     Get station metadata and metadata for the Devices in it. Each user
@@ -177,6 +181,7 @@ async def get_stations() -> Dict[str, Any]:
         return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
     except Exception as e:
         return {"error": f"Request failed: {str(e)}"}
+        
 
 
 # Resource to provide API documentation and help
@@ -224,6 +229,7 @@ async def get_station_summary(
             "Set to False for faster response when only station metadata is needed."
         ),
     ] = True,
+    ctx: Context = None,
 ) -> Dict[str, Any]:
     """
     Get a comprehensive overview of all your WeatherFlow stations including
@@ -369,6 +375,78 @@ def get_unit_options() -> Dict[str, List[str]]:
         "precipitation": ["mm", "in"],
         "distance": ["km", "mi"],
     }
+
+
+@mcp.resource(
+    uri="tempest://stations",
+    name="GetStations",
+    mime_type="application/json",
+)
+async def get_stations_resource(ctx: Context = None) -> Dict[str, Any]:
+    """Get a list of all your WeatherFlow stations.
+    
+    This resource can be used to get a list of all of the configured weather stations along with all connected devices.
+    Each result contains information about the station, including its name, location, devices, state, and more.
+    A Device wihout a serial_number indicates that Device is no longer active.
+    """
+    token = os.getenv("WEATHERFLOW_API_TOKEN")
+
+    if not token:
+        raise ToolError("No API token found")
+
+    try:
+        await ctx.info("Getting stations...")
+        params = {"token": token}
+
+        response = await client.get("/stations/", params=params)
+        response.raise_for_status()
+        return response.json()
+
+    except httpx.HTTPStatusError as e:
+        await ctx.error(f"HTTP error {e.response.status_code}: {e.response.text}")
+        return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+    except Exception as e:
+        await ctx.error(f"Request failed: {str(e)}")
+        return {"error": f"Request failed: {str(e)}"}
+
+
+@mcp.resource(
+    uri="tempest://stations/{station_id}",
+    name="GetStationByID",
+    mime_type="application/json",
+)
+async def get_station_by_id_resource(
+    station_id: Annotated[int, Field(description="The ID of the station to get information for")],
+    ctx: Context = None
+) -> Dict[str, Any]:
+    """Get information and devices for a specific weather station
+    
+    This resource can be used to get a list of all of the configured weather stations along with all connected devices.
+    Each result contains information about the station, including its name, location, devices, state, and more.
+    A Device wihout a serial_number indicates that Device is no longer active.
+
+    Args:
+        station_id: The ID of the station to get information for
+    """
+    token = os.getenv("WEATHERFLOW_API_TOKEN")
+
+    if not token:
+        raise ToolError("No API token found")
+
+    try:
+        await ctx.info(f"Getting station {station_id}...")
+        params = {"token": token}
+
+        response = await client.get(f"/stations/{station_id}", params=params)
+        response.raise_for_status()
+        return response.json()
+
+    except httpx.HTTPStatusError as e:
+        await ctx.error(f"HTTP error {e.response.status_code}: {e.response.text}")
+        return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+    except Exception as e:
+        await ctx.error(f"Request failed: {str(e)}")
+        return {"error": f"Request failed: {str(e)}"}
 
 
 # Example usage resource
