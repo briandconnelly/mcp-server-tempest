@@ -1,11 +1,14 @@
 import os
 from datetime import datetime, timezone
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional, Literal
 
 import httpx
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import Field
+
+_notoken_message = "No API token found. This should be configured using the `WEATHERFLOW_API_TOKEN` environment variable."
+
 
 # Create the MCP server
 mcp = FastMCP(name="WeatherFlow Tempest API Server")
@@ -19,13 +22,23 @@ client = httpx.AsyncClient(base_url=BASE_URL, timeout=30.0)
 
 @mcp.tool
 async def get_better_forecast(
-    station_id: int,
-    units_temp: Annotated[str, Field(description="Temperature units")] = "f",
-    units_wind: Annotated[str, Field(description="Wind speed units")] = "mph",
-    units_pressure: Annotated[str, Field(description="Pressure units")] = "inhg",
-    units_precip: Annotated[str, Field(description="Precipitation units")] = "in",
+    station_id: Annotated[
+        int, Field(description="The station ID to get forecast data for", gt=0)
+    ],
+    units_temp: Annotated[
+        Literal["c", "f", "k"], Field(description="Temperature units")
+    ] = "f",
+    units_wind: Annotated[
+        Literal["mps", "mph", "kph", "kts"], Field(description="Wind speed units")
+    ] = "mph",
+    units_pressure: Annotated[
+        Literal["mb", "inhg", "mmhg"], Field(description="Pressure units")
+    ] = "inhg",
+    units_precip: Annotated[
+        Literal["mm", "in"], Field(description="Precipitation units")
+    ] = "in",
     units_distance: Annotated[
-        str, Field(description="Distance/visibility units")
+        Literal["km", "mi"], Field(description="Distance/visibility units")
     ] = "mi",
     ctx: Context = None,
 ) -> Dict[str, Any]:
@@ -40,12 +53,16 @@ async def get_better_forecast(
         units_pressure: Pressure units (mb, inhg, mmhg)
         units_precip: Precipitation units (mm, in)
         units_distance: Distance units (km, mi)
+
+    Returns:
+        A dictionary containing current conditions, daily forecast,
+        and hourly forecast.
     """
 
-    token = os.getenv("WEATHERFLOW_API_TOKEN")
+    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
+        raise ToolError(_notoken_message)
 
-    if not token:
-        raise ToolError("No API token found")
+    await ctx.info(f"Getting forecast for station {station_id}...")
 
     try:
         params = {
@@ -63,16 +80,28 @@ async def get_better_forecast(
         return response.json()
 
     except httpx.HTTPStatusError as e:
-        return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+        raise ToolError(f"HTTP {e.response.status_code}: {e.response.text}")
     except Exception as e:
-        return {"error": f"Request failed: {str(e)}"}
+        raise ToolError(f"Request failed: {str(e)}")
 
 
 @mcp.tool
 async def get_station_observations(
-    device_id: int,
-    time_start: Optional[int] = None,
-    time_end: Optional[int] = None,
+    device_id: Annotated[
+        int, Field(description="The device ID to get observations for")
+    ],
+    time_start: Annotated[
+        Optional[int],
+        Field(
+            default=None, description="Start time for historical data (Unix timestamp)"
+        ),
+    ],
+    time_end: Annotated[
+        Optional[int],
+        Field(
+            default=None, description="End time for historical data (Unix timestamp)"
+        ),
+    ],
     ctx: Context = None,
 ) -> Dict[str, Any]:
     """
@@ -99,10 +128,10 @@ async def get_station_observations(
         time_end: End time for historical data (Unix timestamp)
     """
 
-    token = os.getenv("WEATHERFLOW_API_TOKEN")
+    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
+        raise ToolError(_notoken_message)
 
-    if not token:
-        raise ToolError("No API token found")
+    await ctx.info(f"Getting observations for device {device_id}...")
 
     try:
         params = {"device_id": device_id, "token": token}
@@ -117,14 +146,15 @@ async def get_station_observations(
         return response.json()
 
     except httpx.HTTPStatusError as e:
-        return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+        raise ToolError(f"HTTP {e.response.status_code}: {e.response.text}")
     except Exception as e:
-        return {"error": f"Request failed: {str(e)}"}
+        raise ToolError(f"Request failed: {str(e)}")
 
 
 @mcp.tool
 async def get_stations_by_device_id(
-    device_id: List[int], ctx: Context = None
+    device_id: Annotated[List[int], Field(description="List of device IDs to look up")],
+    ctx: Context = None,
 ) -> Dict[str, Any]:
     """
     Get station information by device IDs.
@@ -134,10 +164,10 @@ async def get_stations_by_device_id(
         device_id: List of device IDs to look up
     """
 
-    token = os.getenv("WEATHERFLOW_API_TOKEN")
+    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
+        raise ToolError(_notoken_message)
 
-    if not token:
-        raise ToolError("No API token found")
+    await ctx.info("Getting stations by device ID...")
 
     try:
         # Convert list to comma-separated string
@@ -150,9 +180,9 @@ async def get_stations_by_device_id(
         return response.json()
 
     except httpx.HTTPStatusError as e:
-        return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+        raise ToolError(f"HTTP {e.response.status_code}: {e.response.text}")
     except Exception as e:
-        return {"error": f"Request failed: {str(e)}"}
+        raise ToolError(f"Request failed: {str(e)}")
 
 
 @mcp.tool
@@ -165,23 +195,21 @@ async def get_stations(ctx: Context = None) -> Dict[str, Any]:
     A Device wihout a serial_number indicates that Device is no longer active.
     """
 
-    token = os.getenv("WEATHERFLOW_API_TOKEN")
+    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
+        raise ToolError(_notoken_message)
 
-    if not token:
-        raise ToolError("No API token found")
+    await ctx.info("Getting stations...")
 
     try:
         params = {"token": token}
-
         response = await client.get("/stations/", params=params)
         response.raise_for_status()
         return response.json()
 
     except httpx.HTTPStatusError as e:
-        return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+        raise ToolError(f"HTTP {e.response.status_code}: {e.response.text}")
     except Exception as e:
-        return {"error": f"Request failed: {str(e)}"}
-        
+        raise ToolError(f"Request failed: {str(e)}")
 
 
 # Resource to provide API documentation and help
@@ -245,10 +273,8 @@ async def get_station_summary(
         get_observations: If True, includes current weather conditions for each station.
                          If False, returns only station metadata and device information.
     """
-    token = os.getenv("WEATHERFLOW_API_TOKEN")
-
-    if not token:
-        raise ToolError("No API token found")
+    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
+        raise ToolError(_notoken_message)
 
     try:
         # Get all stations
@@ -360,21 +386,9 @@ async def get_station_summary(
         return result
 
     except httpx.HTTPStatusError as e:
-        return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+        raise ToolError(f"HTTP {e.response.status_code}: {e.response.text}")
     except Exception as e:
-        return {"error": f"Request failed: {str(e)}"}
-
-
-@mcp.resource("tempest://config/units")
-def get_unit_options() -> Dict[str, List[str]]:
-    """Available unit options for the WeatherFlow API."""
-    return {
-        "temperature": ["c", "f", "k"],
-        "wind": ["mps", "mph", "kph", "kts"],
-        "pressure": ["mb", "inhg", "mmhg"],
-        "precipitation": ["mm", "in"],
-        "distance": ["km", "mi"],
-    }
+        raise ToolError(f"Request failed: {str(e)}")
 
 
 @mcp.resource(
@@ -384,30 +398,26 @@ def get_unit_options() -> Dict[str, List[str]]:
 )
 async def get_stations_resource(ctx: Context = None) -> Dict[str, Any]:
     """Get a list of all your WeatherFlow stations.
-    
+
     This resource can be used to get a list of all of the configured weather stations along with all connected devices.
     Each result contains information about the station, including its name, location, devices, state, and more.
     A Device wihout a serial_number indicates that Device is no longer active.
     """
-    token = os.getenv("WEATHERFLOW_API_TOKEN")
+    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
+        raise ToolError(_notoken_message)
 
-    if not token:
-        raise ToolError("No API token found")
+    await ctx.info("Getting stations...")
 
     try:
-        await ctx.info("Getting stations...")
         params = {"token": token}
-
         response = await client.get("/stations/", params=params)
         response.raise_for_status()
         return response.json()
 
     except httpx.HTTPStatusError as e:
-        await ctx.error(f"HTTP error {e.response.status_code}: {e.response.text}")
-        return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+        raise ToolError(f"HTTP {e.response.status_code}: {e.response.text}")
     except Exception as e:
-        await ctx.error(f"Request failed: {str(e)}")
-        return {"error": f"Request failed: {str(e)}"}
+        raise ToolError(f"Request failed: {str(e)}")
 
 
 @mcp.resource(
@@ -416,11 +426,13 @@ async def get_stations_resource(ctx: Context = None) -> Dict[str, Any]:
     mime_type="application/json",
 )
 async def get_station_by_id_resource(
-    station_id: Annotated[int, Field(description="The ID of the station to get information for")],
-    ctx: Context = None
+    station_id: Annotated[
+        int, Field(description="The ID of the station to get information for")
+    ],
+    ctx: Context = None,
 ) -> Dict[str, Any]:
     """Get information and devices for a specific weather station
-    
+
     This resource can be used to get a list of all of the configured weather stations along with all connected devices.
     Each result contains information about the station, including its name, location, devices, state, and more.
     A Device wihout a serial_number indicates that Device is no longer active.
@@ -428,51 +440,125 @@ async def get_station_by_id_resource(
     Args:
         station_id: The ID of the station to get information for
     """
-    token = os.getenv("WEATHERFLOW_API_TOKEN")
+    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
+        raise ToolError(_notoken_message)
 
-    if not token:
-        raise ToolError("No API token found")
+    await ctx.info(f"Getting station {station_id}...")
 
     try:
-        await ctx.info(f"Getting station {station_id}...")
-        params = {"token": token}
+        params = {"station_id": station_id, "token": token}
 
         response = await client.get(f"/stations/{station_id}", params=params)
         response.raise_for_status()
         return response.json()
 
     except httpx.HTTPStatusError as e:
-        await ctx.error(f"HTTP error {e.response.status_code}: {e.response.text}")
-        return {"error": f"HTTP {e.response.status_code}: {e.response.text}"}
+        raise ToolError(f"HTTP {e.response.status_code}: {e.response.text}")
     except Exception as e:
-        await ctx.error(f"Request failed: {str(e)}")
-        return {"error": f"Request failed: {str(e)}"}
+        raise ToolError(f"Request failed: {str(e)}")
 
 
-# Example usage resource
-@mcp.resource("tempest://examples/forecast")
-def get_forecast_example() -> str:
-    """Example of how to get a weather forecast."""
-    return """
-Example: Getting a Weather Forecast
-
-To get a forecast for a station, you'll need:
-1. A station_id (find this from your WeatherFlow account or device). You can also get this by calling get_stations().
-
-Example call:
-get_better_forecast(
-    station_id=12345,
-    units_temp="f",
-    units_wind="mph"
+@mcp.resource(
+    uri="tempest://observations/station/{station_id}",
+    name="GetStationObservations",
+    mime_type="application/json",
 )
+async def get_observations_station(
+    station_id: Annotated[
+        int,
+        Field(
+            description="The station ID to get latest weather observations for", gt=0
+        ),
+    ],
+    ctx: Context = None,
+) -> Dict[str, Any]:
+    """Get latest observations from a given weather station
 
-This will return detailed forecast data including:
-- Current conditions
-- Hourly forecast
-- Daily forecast
-- Weather alerts
-- Station metadata
-"""
+    Get the latest federated observation for a Station. This observation is made
+    from the latest Device observations that belong to the Station. If a user has
+    multiple Devices of the same type they are able to designate one of them as
+    primary. This is the one used to make the federated observation.
+
+    A user can also designate each device as either indoor or outdoor. All indoor
+    observation value fields will end with an "_indoor" suffix. Outdoor observations
+    fields do not have a suffix.
+
+    The station_units values represent the units of the Station's owner, not the units
+    of the observation values in the API response.
+
+    Args:
+        station_id: The station ID to get observations for
+    Returns:
+        A dictionary containing current weather onditions at the given station
+
+    """
+
+    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
+        raise ToolError(_notoken_message)
+
+    await ctx.info(f"Getting observations for station {station_id}...")
+
+    try:
+        params = {"station_id": station_id, "token": token}
+        response = await client.get(
+            f"/observations/station/{station_id}", params=params
+        )
+        response.raise_for_status()
+        return response.json()
+
+    except httpx.HTTPStatusError as e:
+        raise ToolError(f"HTTP {e.response.status_code}: {e.response.text}")
+    except Exception as e:
+        raise ToolError(f"Request failed: {str(e)}")
+
+
+@mcp.prompt
+def ask_about_weather(ctx: Context = None) -> str:
+    """Ask about the weather."""
+    return """
+    Please use the get_better_forecast tool to get a weather forecast.
+    """
+
+
+@mcp.resource(
+    uri="tempest://observations/device/{device_id}",
+    name="GetDeviceObservations",
+    mime_type="application/json",
+)
+async def get_device_observations_resource(
+    device_id: Annotated[
+        int, Field(description="The device ID to get weather observations for", gt=0)
+    ],
+    #day_offset: Annotated[int, Field(default=None, description="TODO", ge=0)],
+    #time_start: Annotated[int, Field(default=None, description="TODO", gt=0)],
+    #time_end: Annotated[int, Field(default=None, description="TODO", gt=0)],
+    ctx: Context = None,
+) -> Dict[str, Any]:
+    """Get observations from a given weather device"""
+    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
+        raise ToolError(_notoken_message)
+
+    await ctx.info(f"Getting observations for device {device_id}...")
+
+    try:
+        params = {
+            "device_id": device_id,
+            "token": token,
+            # "day_offset": day_offset,
+            # "time_start": time_start,
+            # "time_end": time_end,
+        }
+        response = await client.get(f"/observations/device/{device_id}", params=params)
+        response.raise_for_status()
+
+        # TODO: translate output from list to dict
+
+        return response.json()
+
+    except httpx.HTTPStatusError as e:
+        raise ToolError(f"HTTP {e.response.status_code}: {e.response.text}")
+    except Exception as e:
+        raise ToolError(f"Request failed: {str(e)}")
 
 
 if __name__ == "__main__":

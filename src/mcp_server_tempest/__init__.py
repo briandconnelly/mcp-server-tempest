@@ -4,7 +4,8 @@ from .server import (
     get_station_observations,
     get_station_summary,
     get_stations_by_device_id,
-    get_unit_options,
+    get_stations_resource,
+    get_station_by_id_resource,
     mcp,
 )
 
@@ -14,7 +15,8 @@ __all__ = [
     "get_station_observations",
     "get_station_summary",
     "get_stations_by_device_id",
-    "get_unit_options",
+    "get_stations_resource",
+    "get_station_by_id_resource",
 ]
 
 
