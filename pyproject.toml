@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "cachetools>=6.1.0",
     "fastmcp>=2.9.2",
     "pydantic>=2.11.7",
     "weatherflow4py>=1.4.1",

@@ -1,4 +1,9 @@
-from .rest import api_get_stations, api_get_station_id, api_get_forecast
+from .rest import (
+    api_get_stations,
+    api_get_station_id,
+    api_get_forecast,
+    api_get_observation,
+)
 from .server import (
     get_stations,
     get_station_id,
@@ -20,6 +25,7 @@ __all__ = [
     "api_get_forecast",
     "get_forecast",
     "get_forecast_resource",
+    "api_get_observation",
 ]
 
 
