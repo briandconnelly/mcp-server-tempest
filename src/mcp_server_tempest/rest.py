@@ -4,7 +4,7 @@ from weatherflow4py.api import WeatherFlowRestAPI
 async def api_get_stations(token: str) -> dict:
     async with WeatherFlowRestAPI(token) as api:
         stations = await api.async_get_stations()
-        return stations.to_dict()["stations"]
+        return stations.to_dict()
 
 
 async def api_get_station_id(station_id: int, token: str) -> dict:

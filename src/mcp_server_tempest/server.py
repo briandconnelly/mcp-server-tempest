@@ -7,18 +7,24 @@ from fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from .rest import (
-    api_get_stations,
-    api_get_station_id,
     api_get_forecast,
     api_get_observation,
+    api_get_station_id,
+    api_get_stations,
 )
-
-_notoken_message = "No API token found. This should be configured using the `WEATHERFLOW_API_TOKEN` environment variable."
 
 cache = TTLCache(maxsize=100, ttl=60 * 5)
 
 # Create the MCP server
 mcp = FastMCP(name="WeatherFlow Tempest API Server")
+
+
+def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
+    if not (token := os.getenv(env_var)):
+        raise ToolError(
+            f"No Tempest API token found. This should be configured using the `{env_var}` environment variable."
+        )
+    return token
 
 
 @mcp.tool
@@ -33,10 +39,11 @@ async def get_stations(
     ctx: Context = None,
 ) -> Dict[str, Any]:
     """
-    Retrieve a list of your stations along with all connected devices
+    Retrieve a list of the weather stations that the user has access to.
+
     Get station metadata and metadata for the Devices in it. Each user
     can create multiple Stations. A Device can only be in one Station at a
-    time. Only devices with a serial_number value can send new observations.
+    time. Only devices with a serial_number value can submit new observations.
     A Device wihout a serial_number indicates that Device is no longer active.
 
     Parameters:
@@ -45,11 +52,92 @@ async def get_stations(
           is a good way to avoid making unnecessary API calls.
 
     Returns:
-        A dictionary containing a list of stations and their devices
+        dict: A dictionary containing station data and API status with the following structure:
+
+        stations : list of dict
+            Array of weather station objects, each containing:
+
+            station_id : int
+                Unique identifier for the weather station
+
+            name : str
+                Internal name of the weather station (e.g., "Seattle")
+
+            public_name : str
+                Public display name of the station (e.g., "Fairview Ave E")
+
+            latitude : float
+                Latitude coordinate of the station
+
+            longitude : float
+                Longitude coordinate of the station
+
+            timezone : str
+                IANA timezone identifier (e.g., "America/Los_Angeles")
+
+            timezone_offset_minutes : int
+                UTC offset in minutes (negative for west of UTC)
+
+            created_epoch : int
+                Unix timestamp when the station was created
+
+            last_modified_epoch : int
+                Unix timestamp of last station modification
+
+            is_local_mode : bool
+                Whether the station is operating in local mode
+
+            station_meta : dict
+                Station metadata containing:
+                - elevation (float): Station elevation in meters above sea level
+                - share_with_wf (bool): Whether data is shared with WeatherFlow
+                - share_with_wu (bool): Whether data is shared with Weather Underground
+
+            devices : list of dict
+                Array of devices connected to the station, each containing:
+                - device_id (int): Unique device identifier
+                - device_type (str): Type of device ('ST' for outdoor sensor, 'HB' for hub)
+                - serial_number (str): Device serial number
+                - firmware_revision (str): Current firmware version
+                - hardware_revision (str): Hardware revision number
+                - device_meta (dict): Device-specific metadata:
+                    - agl (float): Height above ground level in meters
+                    - environment (str): Installation environment ('indoor', 'outdoor')
+                    - name (str): Device name/serial number
+                    - wifi_network_name (str): Connected WiFi network name
+                - device_settings (dict or None): Device-specific configuration settings
+                    - show_precip_final (bool): Whether to show final precipitation values
+
+            station_items : list of dict
+                Configuration of station measurement items, each containing:
+                - item (str): Type of measurement ('air_temperature_humidity', 'barometric_pressure', etc.)
+                - station_id (int): Associated station ID
+                - station_item_id (int): Unique item identifier
+                - location_id (int): Location identifier
+                - location_item_id (int): Location-specific item identifier
+                - device_id (int): Device providing this measurement
+                - sort (int or None): Display sort order
+
+            capabilities : None or dict
+                Station capabilities (currently null in this implementation)
+
+        status : dict
+            API response status information:
+            - status_code (int): Response status code (0 = SUCCESS)
+            - status_message (str): Status message description
+
+    Notes
+    -----
+    - Device types: 'ST' = Tempest outdoor sensor, 'HB' = Hub
+    - AGL (Above Ground Level) measurements are in meters
+    - Elevation is in meters above sea level
+    - All timestamps are Unix epoch time (seconds since 1970-01-01 UTC)
+    - Station items represent the configured measurements for the station
+    - Device settings may be None if no custom settings are configured
+    - Multiple stations may be returned if the user has access to more than one
     """
 
-    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
-        raise ToolError(_notoken_message)
+    token = _get_api_token()
 
     if use_cache:
         if "stations" in cache:
@@ -81,9 +169,17 @@ async def get_station_id(
 ) -> Dict[str, Any]:
     """Get information about a specific weather station
 
+    Users can only access stations that they own. The request will fail if the user
+    does not have access to the given station. The get_stations tool or "Get Weather Stations" resource
+    can be used to get a list of all of the stations that the user has access to. If the user does not
+    have access to the given station, the request will fail with a "Not Found" error.
+    When this happens, inform the user that the API key provided may not be valid for the given station.
+
     Parameters:
         station_id: The station ID to get information for
-        use_cache: Whether to use the cache to store the results of the request (default: True)
+        use_cache: Whether to use the cache to store the results of the request (default: True).
+          Station configurations do not typicallychange frequently, so this is a good way to avoid
+          making unnecessary API calls.
 
     Returns:
         A dictionary containing comprehensive station metadata and device information with the following structure:
@@ -167,8 +263,7 @@ async def get_station_id(
     - Capabilities show what measurements each device can provide
     - Device settings may be None if no custom settings are configured
     """
-    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
-        raise ToolError(_notoken_message)
+    token = _get_api_token()
 
     cache_id = f"station_id_{station_id}"
 
@@ -203,9 +298,20 @@ async def get_forecast(
 ) -> Dict[str, Any]:
     """Get the forecast for a specific weather station
 
+    Users can only retrieve forecasts for stations that they own. The request will fail if the user
+    does not have access to the given station. The get_stations tool or "Get Weather Stations" resource
+    can be used to get a list of all of the stations that the user has access to. If the user does not
+    have access to the given station, the request will fail with a "Not Found" error.
+    When this happens, inform the user that the API key provided may not be valid for the given station.
+
     Parameters:
         station_id: The ID of the station to get information for
         use_cache: Whether to use the cache to store the results of the request (default: True)
+
+    Very Important: When reporting values, always use the units specified in the `units` dictionary. For example,
+      if the `units` dictionary specifies that the temperature units (`units_temp`) are 'f' for Fahrenheit,
+      then you should report the temperature in Fahrenheit. If the user requests a different unit of measurement,
+      you should convert the value to the requested unit.
 
     This tool resturns a dictionary containing weather forecast and current
     conditions data with the following structure:
@@ -285,8 +391,7 @@ async def get_forecast(
         - units_distance (str): Distance units ('km' for kilometers)
         - units_other (str): General unit system ('metric')
     """
-    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
-        raise ToolError(_notoken_message)
+    token = _get_api_token()
 
     cache_id = f"forecast_{station_id}"
     if use_cache and cache_id in cache:
@@ -316,7 +421,20 @@ async def get_observation(
     ],
     ctx: Context = None,
 ) -> Dict[str, Any]:
-    """Get recentobservations for a specific weather station
+    """Get recent observations for a specific weather station
+
+    Observations contain the most recent weather conditions at the given station.
+
+    Users can only access observations for stations that they own. The request will fail if the user
+    does not have access to the given station. The get_stations tool or "Get Weather Stations" resource
+    can be used to get a list of all of the stations that the user has access to. If the user does not
+    have access to the given station, the request will fail with a "Not Found" error.
+    When this happens, inform the user that the API key provided may not be valid for the given station.
+
+    Very Important: When reporting values, always use the units specified in the `station_units` dictionary.
+      For example, if the `station_units` dictionary specifies that the temperature units (`units_temp`)
+      are 'c' for Celsius, then you should report the temperature in Celsius. If the user requests a different
+      unit of measurement, you should convert the value to the requested unit.
 
     Parameters:
         station_id: The ID of the station to get information for
@@ -406,9 +524,9 @@ async def get_observation(
         API response status information:
         - status_code (int): Response status code (0 = SUCCESS)
         - status_message (str): Status message description
+
     """
-    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
-        raise ToolError(_notoken_message)
+    token = _get_api_token()
 
     cache_id = f"observation_{station_id}"
     if use_cache and cache_id in cache:
@@ -434,12 +552,11 @@ async def get_observation(
 async def get_stations_resource(ctx: Context = None) -> Dict[str, Any]:
     """Get a list of all your WeatherFlow stations.
 
-    This resource can be used to get a list of all of the configured weather stations along with all connected devices.
+    This resource can be used to get a list of all of the configured weather stations that the user has access to, along with all connected devices.
     Each result contains information about the station, including its name, location, devices, state, and more.
     A Device wihout a serial_number indicates that Device is no longer active.
     """
-    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
-        raise ToolError(_notoken_message)
+    token = _get_api_token()
 
     if "stations" in cache:
         await ctx.info("Using cached station data")
@@ -467,7 +584,7 @@ async def get_station_id_resource(
 ) -> Dict[str, Any]:
     """Get information and devices for a specific weather station
 
-    This resource can be used to get a list of all of the configured weather stations along with all connected devices.
+    This resource can be used to get a list of all of the configured weather stations that the user has access to, along with all connected devices.
     Each result contains information about the station, including its name, location, devices, state, and more.
     A Device wihout a serial_number indicates that Device is no longer active.
 
@@ -475,8 +592,7 @@ async def get_station_id_resource(
         station_id: The ID of the station to get information for
     """
 
-    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
-        raise ToolError(_notoken_message)
+    token = _get_api_token()
 
     cache_id = f"station_id_{station_id}"
     if cache_id in cache:
@@ -507,16 +623,13 @@ async def get_forecast_resource(
 ) -> Dict[str, Any]:
     """Get information and devices for a specific weather station
 
-    This resource can be used to get a list of all of the configured weather stations along with all connected devices.
-    Each result contains information about the station, including its name, location, devices, state, and more.
-    A Device wihout a serial_number indicates that Device is no longer active.
+    This resource allows the user to retrieve the weather forecast from the specified weather station.
 
     Args:
         station_id: The ID of the station to get information for
     """
 
-    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
-        raise ToolError(_notoken_message)
+    token = _get_api_token()
 
     cache_id = f"forecast_{station_id}"
     if cache_id in cache:
@@ -543,10 +656,12 @@ async def get_observation_resource(
     ],
     ctx: Context = None,
 ) -> Dict[str, Any]:
-    """Get observations for a specific weather station"""
+    """Get observations for a specific weather station
 
-    if not (token := os.getenv("WEATHERFLOW_API_TOKEN")):
-        raise ToolError(_notoken_message)
+    This resource allows the user to retrieve the weather forecast from the specified weather station.
+    """
+
+    token = _get_api_token()
 
     await ctx.info(f"Getting observations for station {station_id}...")
 
