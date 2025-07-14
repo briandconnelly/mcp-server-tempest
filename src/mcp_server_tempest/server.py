@@ -16,7 +16,35 @@ from .rest import (
 cache = TTLCache(maxsize=100, ttl=60 * 5)
 
 # Create the MCP server
-mcp = FastMCP(name="WeatherFlow Tempest API Server")
+mcp = FastMCP(
+    name="WeatherFlow Tempest API Server",
+    instructions="""
+    This server provides access to WeatherFlow Tempest weather station data.
+    Use get_stations() first to discover available stations, then use their IDs
+    to get forecasts, observations, or detailed station information.
+    Be aware that all weather data is returned in the units specified by each station.
+    This is included in either the `units` dictionary or the `station_units` dictionary.
+    For example, if the `units` dictionary specifies that the temperature units (`units_temp`) are 'f' for Fahrenheit,
+    then you should report the temperature in Fahrenheit. If the user requests a different unit of measurement,
+    you should convert the value to the requested unit.
+
+    The user will only have access to data fromthe stations that they own.
+    If the user does not have access to the given station, the request will fail with a "Not Found" error.
+    When this happens, inform the user that the API key provided may not be valid for the given station.
+
+    Tools:
+    - get_stations(): Get a list of the weather stations that the user has access to.
+    - get_station_id(): Get information about a specific weather station.
+    - get_forecast(): Get the forecast and current conditions for a specific weather station.
+    - get_observation(): Get the latest detailed observations for a specific weather station.
+
+    Resources:
+    - tempest://stations: Get a list of the weather stations that the user has access to.
+    - tempest://stations/{station_id}: Get information about a specific weather station.
+    - tempest://forecast/{station_id}: Get the forecast for a specific weather station. This also includes current conditions.
+    - tempest://observations/{station_id}: Get the latest detailed observations for a specific weather station.
+    """,
+)
 
 
 def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
@@ -25,6 +53,20 @@ def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
             f"No Tempest API token found. This should be configured using the `{env_var}` environment variable."
         )
     return token
+
+
+async def _get_stations_data(ctx: Context, use_cache: bool = True) -> Dict[str, Any]:
+    """Shared logic for getting stations data."""
+    token = _get_api_token()
+
+    if use_cache and "stations" in cache:
+        await ctx.info("Using cached station data")
+        return cache["stations"]
+
+    await ctx.info("Getting stations via the Tempest API")
+    result = await api_get_stations(token)
+    cache["stations"] = result
+    return result
 
 
 @mcp.tool
@@ -137,18 +179,8 @@ async def get_stations(
     - Multiple stations may be returned if the user has access to more than one
     """
 
-    token = _get_api_token()
-
-    if use_cache:
-        if "stations" in cache:
-            await ctx.info("Using cached station data")
-            return cache["stations"]
-
     try:
-        await ctx.info("Getting stations via the Tempest API")
-        result = await api_get_stations(token)
-        cache["stations"] = result
-        return result
+        return await _get_stations_data(ctx, use_cache)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
@@ -168,12 +200,6 @@ async def get_station_id(
     ctx: Context = None,
 ) -> Dict[str, Any]:
     """Get information about a specific weather station
-
-    Users can only access stations that they own. The request will fail if the user
-    does not have access to the given station. The get_stations tool or "Get Weather Stations" resource
-    can be used to get a list of all of the stations that the user has access to. If the user does not
-    have access to the given station, the request will fail with a "Not Found" error.
-    When this happens, inform the user that the API key provided may not be valid for the given station.
 
     Parameters:
         station_id: The station ID to get information for
@@ -296,22 +322,11 @@ async def get_forecast(
     ],
     ctx: Context = None,
 ) -> Dict[str, Any]:
-    """Get the forecast for a specific weather station
-
-    Users can only retrieve forecasts for stations that they own. The request will fail if the user
-    does not have access to the given station. The get_stations tool or "Get Weather Stations" resource
-    can be used to get a list of all of the stations that the user has access to. If the user does not
-    have access to the given station, the request will fail with a "Not Found" error.
-    When this happens, inform the user that the API key provided may not be valid for the given station.
+    """Get the forecast and current conditions for a specific weather station
 
     Parameters:
         station_id: The ID of the station to get information for
         use_cache: Whether to use the cache to store the results of the request (default: True)
-
-    Very Important: When reporting values, always use the units specified in the `units` dictionary. For example,
-      if the `units` dictionary specifies that the temperature units (`units_temp`) are 'f' for Fahrenheit,
-      then you should report the temperature in Fahrenheit. If the user requests a different unit of measurement,
-      you should convert the value to the requested unit.
 
     This tool resturns a dictionary containing weather forecast and current
     conditions data with the following structure:
@@ -421,20 +436,9 @@ async def get_observation(
     ],
     ctx: Context = None,
 ) -> Dict[str, Any]:
-    """Get recent observations for a specific weather station
+    """Get recent detailed observations for a specific weather station
 
     Observations contain the most recent weather conditions at the given station.
-
-    Users can only access observations for stations that they own. The request will fail if the user
-    does not have access to the given station. The get_stations tool or "Get Weather Stations" resource
-    can be used to get a list of all of the stations that the user has access to. If the user does not
-    have access to the given station, the request will fail with a "Not Found" error.
-    When this happens, inform the user that the API key provided may not be valid for the given station.
-
-    Very Important: When reporting values, always use the units specified in the `station_units` dictionary.
-      For example, if the `station_units` dictionary specifies that the temperature units (`units_temp`)
-      are 'c' for Celsius, then you should report the temperature in Celsius. If the user requests a different
-      unit of measurement, you should convert the value to the requested unit.
 
     Parameters:
         station_id: The ID of the station to get information for
@@ -556,17 +560,8 @@ async def get_stations_resource(ctx: Context = None) -> Dict[str, Any]:
     Each result contains information about the station, including its name, location, devices, state, and more.
     A Device wihout a serial_number indicates that Device is no longer active.
     """
-    token = _get_api_token()
-
-    if "stations" in cache:
-        await ctx.info("Using cached station data")
-        return cache["stations"]
-
     try:
-        await ctx.info("Getting stations via the Tempest API")
-        result = await api_get_stations(token)
-        cache["stations"] = result
-        return result
+        return await _get_stations_data(ctx, use_cache=True)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
@@ -656,7 +651,7 @@ async def get_observation_resource(
     ],
     ctx: Context = None,
 ) -> Dict[str, Any]:
-    """Get observations for a specific weather station
+    """Get latest detailed observations for a specific weather station
 
     This resource allows the user to retrieve the weather forecast from the specified weather station.
     """
