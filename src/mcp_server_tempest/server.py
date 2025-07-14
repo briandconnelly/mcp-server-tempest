@@ -39,11 +39,13 @@ mcp = FastMCP(
     - get_observation(): Get the latest detailed observations for a specific weather station.
 
     Resources:
-    - tempest://stations: Get a list of the weather stations that the user has access to.
-    - tempest://stations/{station_id}: Get information about a specific weather station.
-    - tempest://forecast/{station_id}: Get the forecast for a specific weather station. This also includes current conditions.
-    - tempest://observations/{station_id}: Get the latest detailed observations for a specific weather station.
+    - weather://tempest/stations: Get a list of the weather stations that the user has access to.
+    - weather://tempest/stations/{station_id}: Get information about a specific weather station.
+    - weather://tempest/forecast/{station_id}: Get the forecast for a specific weather station. This also includes current conditions.
+    - weather://tempest/observations/{station_id}: Get the latest detailed observations for a specific weather station.
     """,
+    # tags={"weather", "sensors", "tempest"},
+    # dependencies=["cachetools", "pydantic", "fastmcp", "weatherflow4py"],
 )
 
 
@@ -577,7 +579,7 @@ async def get_observation(
 
 
 @mcp.resource(
-    uri="tempest://stations",
+    uri="weather://tempest/stations",
     name="Get Weather Stations",
     mime_type="application/json",
 )
@@ -595,7 +597,7 @@ async def get_stations_resource(ctx: Context = None) -> Dict[str, Any]:
 
 
 @mcp.resource(
-    uri="tempest://stations/{station_id}",
+    uri="weather://tempest/stations/{station_id}",
     name="GetWeatherStationByID",
     mime_type="application/json",
 )
@@ -634,7 +636,7 @@ async def get_station_id_resource(
 
 
 @mcp.resource(
-    uri="tempest://forecast/{station_id}",
+    uri="weather://tempest/forecast/{station_id}",
     name="GetWeatherForecast",
     mime_type="application/json",
 )
@@ -669,7 +671,7 @@ async def get_forecast_resource(
 
 
 @mcp.resource(
-    uri="tempest://observations/{station_id}",
+    uri="weather://tempest/observations/{station_id}",
     name="GetWeatherObservations",
     mime_type="application/json",
 )
