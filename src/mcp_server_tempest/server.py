@@ -69,7 +69,14 @@ async def _get_stations_data(ctx: Context, use_cache: bool = True) -> Dict[str, 
     return result
 
 
-@mcp.tool
+@mcp.tool(
+    annotations={
+        "title": "Get Weather Stations",
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": False,
+    }
+)
 async def get_stations(
     use_cache: Annotated[
         bool,
@@ -185,7 +192,14 @@ async def get_stations(
         raise ToolError(f"Request failed: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "title": "Get Weather Station Information",
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": False,
+    }
+)
 async def get_station_id(
     station_id: Annotated[
         int, Field(description="The station ID to get information for")
@@ -308,7 +322,14 @@ async def get_station_id(
         raise ToolError(f"Request failed: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "title": "Get Weather Forecast for a Station",
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": False,
+    }
+)
 async def get_forecast(
     station_id: Annotated[
         int, Field(description="The ID of the station to get information for")
@@ -422,7 +443,14 @@ async def get_forecast(
         raise ToolError(f"Request failed: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations={
+        "title": "Get Current Weather Observations for a Station",
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": False,
+    }
+)
 async def get_observation(
     station_id: Annotated[
         int, Field(description="The ID of the station to get information for")
