@@ -7,6 +7,9 @@ from fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from .models import (
+    ForecastResponse,
+    ObservationResponse,
+    StationResponse,
     StationsResponse,
 )
 
@@ -71,8 +74,28 @@ async def _get_stations_data(ctx: Context, use_cache: bool = True) -> Dict[str, 
 
     await ctx.info("Getting stations via the Tempest API")
     result = await api_get_stations(token)
-    cache["stations"] = result
-    return result
+    cache["stations"] = StationsResponse(**result)
+    return cache["stations"]
+
+
+async def _get_station_id_data(
+    ctx: Context, station_id: int, use_cache: bool = True
+) -> Dict[str, Any]:
+    """Shared logic for getting station ID data."""
+    token = _get_api_token()
+
+    cache_id = f"station_id_{station_id}"
+
+    if use_cache and cache_id in cache:
+        await ctx.info(f"Using cached station data for station {station_id}")
+        return cache[cache_id]
+
+    await ctx.info(
+        f"Getting station ID data for station {station_id} via the Tempest API"
+    )
+    result = await api_get_station_id(station_id, token)
+    cache[cache_id] = StationResponse(**result)
+    return cache[cache_id]
 
 
 @mcp.tool(
@@ -92,7 +115,7 @@ async def get_stations(
         ),
     ],
     ctx: Context = None,
-) -> Dict[str, Any]:
+) -> StationsResponse:
     """
     Retrieve a list of the weather stations that the user has access to.
 
@@ -107,95 +130,12 @@ async def get_stations(
           is a good way to avoid making unnecessary API calls.
 
     Returns:
-        dict: A dictionary containing station data and API status with the following structure:
+        StationsResponse object containing the list of stations and API status
 
-        stations : list of dict
-            Array of weather station objects, each containing:
-
-            station_id : int
-                Unique identifier for the weather station
-
-            name : str
-                Internal name of the weather station (e.g., "Seattle")
-
-            public_name : str
-                Public display name of the station (e.g., "Fairview Ave E")
-
-            latitude : float
-                Latitude coordinate of the station
-
-            longitude : float
-                Longitude coordinate of the station
-
-            timezone : str
-                IANA timezone identifier (e.g., "America/Los_Angeles")
-
-            timezone_offset_minutes : int
-                UTC offset in minutes (negative for west of UTC)
-
-            created_epoch : int
-                Unix timestamp when the station was created
-
-            last_modified_epoch : int
-                Unix timestamp of last station modification
-
-            is_local_mode : bool
-                Whether the station is operating in local mode
-
-            station_meta : dict
-                Station metadata containing:
-                - elevation (float): Station elevation in meters above sea level
-                - share_with_wf (bool): Whether data is shared with WeatherFlow
-                - share_with_wu (bool): Whether data is shared with Weather Underground
-
-            devices : list of dict
-                Array of devices connected to the station, each containing:
-                - device_id (int): Unique device identifier
-                - device_type (str): Type of device ('ST' for outdoor sensor, 'HB' for hub)
-                - serial_number (str): Device serial number
-                - firmware_revision (str): Current firmware version
-                - hardware_revision (str): Hardware revision number
-                - device_meta (dict): Device-specific metadata:
-                    - agl (float): Height above ground level in meters
-                    - environment (str): Installation environment ('indoor', 'outdoor')
-                    - name (str): Device name/serial number
-                    - wifi_network_name (str): Connected WiFi network name
-                - device_settings (dict or None): Device-specific configuration settings
-                    - show_precip_final (bool): Whether to show final precipitation values
-
-            station_items : list of dict
-                Configuration of station measurement items, each containing:
-                - item (str): Type of measurement ('air_temperature_humidity', 'barometric_pressure', etc.)
-                - station_id (int): Associated station ID
-                - station_item_id (int): Unique item identifier
-                - location_id (int): Location identifier
-                - location_item_id (int): Location-specific item identifier
-                - device_id (int): Device providing this measurement
-                - sort (int or None): Display sort order
-
-            capabilities : None or dict
-                Station capabilities (currently null in this implementation)
-
-        status : dict
-            API response status information:
-            - status_code (int): Response status code (0 = SUCCESS)
-            - status_message (str): Status message description
-
-    Notes
-    -----
-    - Device types: 'ST' = Tempest outdoor sensor, 'HB' = Hub
-    - AGL (Above Ground Level) measurements are in meters
-    - Elevation is in meters above sea level
-    - All timestamps are Unix epoch time (seconds since 1970-01-01 UTC)
-    - Station items represent the configured measurements for the station
-    - Device settings may be None if no custom settings are configured
-    - Multiple stations may be returned if the user has access to more than one
     """
 
     try:
-        data = await _get_stations_data(ctx, use_cache)
-        ctx.info(f"Using pydantic stuff!")
-        return StationsResponse(**data)
+        return await _get_stations_data(ctx, use_cache)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
@@ -220,7 +160,7 @@ async def get_station_id(
         ),
     ],
     ctx: Context = None,
-) -> Dict[str, Any]:
+) -> StationResponse:
     """Get information about a specific weather station
 
     Parameters:
@@ -230,102 +170,10 @@ async def get_station_id(
           making unnecessary API calls.
 
     Returns:
-        A dictionary containing comprehensive station metadata and device information with the following structure:
-
-        station_id : int
-            Unique identifier for the weather station
-
-        name : str
-            Internal name of the weather station (e.g., "Seattle")
-
-        public_name : str
-            Public display name of the station (e.g., "Lake Union")
-
-        latitude : float
-            Latitude coordinate of the station
-
-        longitude : float
-            Longitude coordinate of the station
-
-        timezone : str
-            IANA timezone identifier (e.g., "America/Los_Angeles")
-
-        timezone_offset_minutes : int
-            UTC offset in minutes (negative for west of UTC)
-
-        created_epoch : int
-            Unix timestamp when the station was created
-
-        last_modified_epoch : int
-            Unix timestamp of last station modification
-
-        is_local_mode : bool
-            Whether the station is operating in local mode
-
-        station_meta : dict
-            Station metadata containing:
-            - elevation (float): Station elevation in meters above sea level
-            - share_with_wf (bool): Whether data is shared with WeatherFlow
-            - share_with_wu (bool): Whether data is shared with Weather Underground
-
-        devices : list of dict
-            Array of devices connected to the station, each containing:
-            - device_id (int): Unique device identifier
-            - device_type (str): Type of device ('ST' for outdoor sensor, 'HB' for hub)
-            - serial_number (str): Device serial number
-            - firmware_revision (str): Current firmware version
-            - hardware_revision (str): Hardware revision number
-            - device_meta (dict): Device-specific metadata:
-                - agl (float): Height above ground level in meters
-                - environment (str): Installation environment ('indoor', 'outdoor')
-                - name (str): Device name/serial number
-                - wifi_network_name (str): Connected WiFi network name
-            - device_settings (dict or None): Device-specific configuration settings
-                - show_precip_final (bool): Whether to show final precipitation values
-
-        station_items : list of dict
-            Configuration of station measurement items, each containing:
-            - item (str): Type of measurement ('air_temperature_humidity', 'barometric_pressure', etc.)
-            - station_id (int): Associated station ID
-            - station_item_id (int): Unique item identifier
-            - location_id (int): Location identifier
-            - location_item_id (int): Location-specific item identifier
-            - device_id (int): Device providing this measurement
-            - sort (int or None): Display sort order
-
-        capabilities : list of dict
-            Station measurement capabilities, each containing:
-            - capability (str): Measurement capability type
-            - device_id (int): Device providing this capability
-            - environment (str): Operating environment ('indoor', 'outdoor')
-            - agl (float or None): Height above ground level in meters
-            - show_precip_final (bool or None): Precipitation display setting
-
-    Notes
-    -----
-    - Device types: 'ST' = Tempest outdoor sensor, 'HB' = Hub
-    - AGL (Above Ground Level) measurements are in meters
-    - Elevation is in meters above sea level
-    - All timestamps are Unix epoch time (seconds since 1970-01-01 UTC)
-    - Station items represent the configured measurements for the station
-    - Capabilities show what measurements each device can provide
-    - Device settings may be None if no custom settings are configured
+        A StationResponse object containing comprehensive station metadata and device information
     """
-    token = _get_api_token()
-
-    cache_id = f"station_id_{station_id}"
-
-    if use_cache and cache_id in cache:
-        await ctx.info(f"Using cached station data for station {station_id}")
-        return cache[cache_id]
-
     try:
-        await ctx.info(
-            f"Getting information for station {station_id} via the Tempest API"
-        )
-        result = await api_get_station_id(station_id, token)
-        cache[cache_id] = result
-        return result
+        return await _get_station_id_data(ctx, station_id, use_cache)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
@@ -350,7 +198,7 @@ async def get_forecast(
         ),
     ],
     ctx: Context = None,
-) -> Dict[str, Any]:
+) -> ForecastResponse:
     """Get the forecast and current conditions for a specific weather station
 
     Parameters:
@@ -360,80 +208,6 @@ async def get_forecast(
     This tool resturns a dictionary containing weather forecast and current
     conditions data with the following structure:
 
-    forecast : dict
-        Contains daily and hourly forecast arrays
-
-        daily : list of dict
-            10-day daily forecast with each day containing:
-            - air_temp_high/low (float): High/low temperatures in Celsius
-            - day_num (int): Day of month (1-31)
-            - day_start_local (int): Unix timestamp for start of day in local time
-            - month_num (int): Month number (1-12)
-            - icon (str): Weather icon identifier ('clear-day', 'partly-cloudy-day', etc.)
-            - conditions (str): Weather conditions description ('Clear', 'Partly Cloudy', etc.)
-            - precip_probability (int): Precipitation probability (0-100)
-            - precip_type (str): Type of precipitation ('rain', 'snow', etc.)
-            - precip_icon (str): Precipitation icon identifier
-            - sunrise/sunset (int): Unix timestamps for sunrise/sunset
-
-        hourly : list of dict
-            Detailed hourly forecast (typically 240+ hours) with each hour containing:
-            - air_temperature (float): Temperature in Celsius
-            - local_day/hour (int): Local day and hour
-            - time (int): Unix timestamp
-            - precip (float): Precipitation amount in mm
-            - precip_probability (int): Precipitation probability (0-100)
-            - precip_type (str): Type of precipitation
-            - relative_humidity (int): Relative humidity percentage (0-100)
-            - sea_level_pressure (float): Atmospheric pressure in mb
-            - wind_avg (float): Average wind speed in m/s
-            - wind_direction (float): Wind direction in degrees (0-360)
-            - wind_direction_cardinal (str): Cardinal wind direction ('N', 'NE', etc.)
-            - wind_gust (float): Wind gust speed in m/s
-            - conditions (str): Weather conditions description
-            - icon (str): Weather icon identifier
-            - feels_like (float): Apparent temperature in Celsius
-            - uv (float): UV index
-
-    current_conditions : dict
-        Real-time weather observations including:
-        - air_temperature (float): Current temperature in Celsius
-        - conditions (str): Current weather conditions
-        - feels_like (float): Apparent temperature in Celsius
-        - icon (str): Current weather icon
-        - relative_humidity (int): Current humidity percentage
-        - sea_level_pressure (float): Current pressure in mb
-        - wind_avg/gust (float): Wind speeds in m/s
-        - wind_direction (float): Wind direction in degrees
-        - wind_direction_cardinal (str): Cardinal wind direction
-        - uv (int): Current UV index
-        - time (int): Unix timestamp of observation
-        - Additional measurements: solar_radiation, brightness, dew_point,
-            wet_bulb_temperature, lightning data, precipitation accumulations
-
-    location_name : str
-        Name of the weather station location (e.g., "Seattle")
-
-    latitude : float
-        Latitude coordinate of the station
-
-    longitude : float
-        Longitude coordinate of the station
-
-    timezone : str
-        IANA timezone identifier (e.g., "America/Los_Angeles")
-
-    timezone_offset_minutes : int
-        UTC offset in minutes (negative for west of UTC)
-
-    units : dict
-        Unit specifications for all measurements:
-        - units_temp (str): Temperature units ('c' for Celsius)
-        - units_wind (str): Wind speed units ('mps' for meters per second)
-        - units_pressure (str): Pressure units ('mb' for millibars)
-        - units_precip (str): Precipitation units ('mm' for millimeters)
-        - units_distance (str): Distance units ('km' for kilometers)
-        - units_other (str): General unit system ('metric')
     """
     token = _get_api_token()
 
@@ -444,9 +218,10 @@ async def get_forecast(
 
     try:
         await ctx.info(f"Getting forecast for station {station_id} via the Tempest API")
-        result = await api_get_forecast(station_id, token)
-        cache[cache_id] = result
-        return result
+        data = await api_get_forecast(station_id, token)
+        obj = ForecastResponse(**data)
+        cache[cache_id] = obj
+        return obj
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
@@ -471,7 +246,7 @@ async def get_observation(
         ),
     ],
     ctx: Context = None,
-) -> Dict[str, Any]:
+) -> ObservationResponse:
     """Get recent detailed observations for a specific weather station
 
     Observations contain the most recent weather conditions at the given station.
@@ -481,90 +256,7 @@ async def get_observation(
         use_cache: Whether to use the cache to store the results of the request (default: True)
 
     Returns:
-        A dictionary containing current weather observations and station metadata with the following structure:
-
-    outdoor_keys : list of str
-        List of available outdoor measurement field names, described below
-
-    obs : list of dict
-        Array of observation records (typically contains one current observation) with each record containing:
-        - timestamp (int): Unix timestamp of the observation
-        - air_temperature (float): Current air temperature
-        - barometric_pressure (float): Station barometric pressure
-        - station_pressure (float): Station-level atmospheric pressure
-        - pressure_trend (str): Pressure trend ('steady', 'rising', 'falling')
-        - sea_level_pressure (float): Sea level adjusted atmospheric pressure
-        - relative_humidity (int): Relative humidity percentage (0-100)
-        - precip (float): Current precipitation rate
-        - precip_accum_last_1hr (float): Precipitation accumulation in last hour
-        - precip_accum_local_day (float): Precipitation accumulation for current local day
-        - precip_accum_local_day_final (float): Final precipitation total for current day
-        - precip_accum_local_yesterday (float): Precipitation accumulation for yesterday
-        - precip_accum_local_yesterday_final (float): Final precipitation total for yesterday
-        - precip_analysis_type_yesterday (int): Type of precipitation analysis for yesterday
-        - precip_minutes_local_day (int): Minutes of precipitation today
-        - precip_minutes_local_yesterday (int): Minutes of precipitation yesterday
-        - precip_minutes_local_yesterday_final (int): Final minutes of precipitation yesterday
-        - wind_avg (float): Average wind speed
-        - wind_direction (int): Wind direction in degrees (0-360)
-        - wind_gust (float): Wind gust speed
-        - wind_lull (float): Wind lull (minimum wind speed)
-        - solar_radiation (float): Solar radiation intensity
-        - uv (float): UV index
-        - brightness (float): Light intensity in lux
-        - lightning_strike_last_epoch (int): Unix timestamp of last lightning strike
-        - lightning_strike_last_distance (int): Distance to last lightning strike
-        - lightning_strike_count (int): Current lightning strike count
-        - lightning_strike_count_last_1hr (int): Lightning strikes in last hour
-        - lightning_strike_count_last_3hr (int): Lightning strikes in last 3 hours
-        - feels_like (float): Apparent temperature (heat index or wind chill)
-        - heat_index (float): Heat index temperature
-        - wind_chill (float): Wind chill temperature
-        - dew_point (float): Dew point temperature
-        - wet_bulb_temperature (float): Wet bulb temperature
-        - wet_bulb_globe_temperature (float): Wet bulb globe temperature
-        - delta_t (float): Delta T (difference between air temp and wet bulb temp)
-        - air_density (float): Air density
-
-    station_id : int
-        Unique identifier for the weather station
-
-    station_name : str
-        Name of the weather station (e.g., "Seattle")
-
-    public_name : str
-        Public display name of the station (e.g., "Lake Union")
-
-    latitude : float
-        Latitude coordinate of the station
-
-    longitude : float
-        Longitude coordinate of the station
-
-    elevation : float
-        Elevation of the station in meters
-
-    is_public : bool
-        Whether the station data is publicly accessible
-
-    timezone : str
-        IANA timezone identifier (e.g., "America/Los_Angeles")
-
-    station_units : dict
-        Unit specifications for all measurements:
-        - units_temp (str): Temperature units ('f' for Fahrenheit, 'c' for Celsius)
-        - units_wind (str): Wind speed units ('mph', 'mps', 'kph')
-        - units_precip (str): Precipitation units ('in' for inches, 'mm' for millimeters)
-        - units_pressure (str): Pressure units ('inhg', 'mb', 'hpa')
-        - units_distance (str): Distance units ('mi' for miles, 'km' for kilometers)
-        - units_direction (str): Direction format ('cardinal', 'degrees')
-        - units_other (str): General unit system ('imperial', 'metric')
-
-    status : dict
-        API response status information:
-        - status_code (int): Response status code (0 = SUCCESS)
-        - status_message (str): Status message description
-
+        ObservationResponse object containing the current weather observations and station metadata
     """
     token = _get_api_token()
 
@@ -578,8 +270,9 @@ async def get_observation(
             f"Getting observations for station {station_id} via the Tempest API"
         )
         result = await api_get_observation(station_id, token)
-        cache[cache_id] = result
-        return result
+        obj = ObservationResponse(**result)
+        cache[cache_id] = obj
+        return obj
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
@@ -589,7 +282,7 @@ async def get_observation(
     name="Get Weather Stations",
     mime_type="application/json",
 )
-async def get_stations_resource(ctx: Context = None) -> Dict[str, Any]:
+async def get_stations_resource(ctx: Context = None) -> StationsResponse:
     """Get a list of all your WeatherFlow stations.
 
     This resource can be used to get a list of all of the configured weather stations that the user has access to, along with all connected devices.
@@ -612,7 +305,7 @@ async def get_station_id_resource(
         int, Field(description="The ID of the station to get information for")
     ],
     ctx: Context = None,
-) -> Dict[str, Any]:
+) -> StationResponse:
     """Get information and devices for a specific weather station
 
     This resource can be used to get a list of all of the configured weather stations that the user has access to, along with all connected devices.
@@ -623,20 +316,8 @@ async def get_station_id_resource(
         station_id: The ID of the station to get information for
     """
 
-    token = _get_api_token()
-
-    cache_id = f"station_id_{station_id}"
-    if cache_id in cache:
-        await ctx.info(f"Using cached station data for station {station_id}")
-        return cache[cache_id]
-
     try:
-        await ctx.info(
-            f"Getting information for station {station_id} via the Tempest API"
-        )
-        result = await api_get_station_id(station_id, token)
-        cache[cache_id] = result
-        return result
+        return await _get_station_id_data(ctx, station_id, use_cache=True)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
@@ -669,9 +350,10 @@ async def get_forecast_resource(
 
     try:
         await ctx.info(f"Getting forecast for station {station_id} via the Tempest API")
-        result = await api_get_forecast(station_id, token)
-        cache[cache_id] = result
-        return result
+        data = await api_get_forecast(station_id, token)
+        obj = ForecastResponse(**data)
+        cache[cache_id] = obj
+        return obj
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
@@ -696,9 +378,16 @@ async def get_observation_resource(
 
     await ctx.info(f"Getting observations for station {station_id}...")
 
+    # TODO check cache
+
     try:
+        await ctx.info(
+            f"Getting observations for station {station_id} via the Tempest API"
+        )
         result = await api_get_observation(station_id, token)
-        return result
+        obj = ObservationResponse(**result)
+        # cache[cache_id] = obj
+        return obj
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 

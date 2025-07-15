@@ -251,7 +251,7 @@ class HourlyForecast(BaseModel):
     )
     sea_level_pressure: float = Field(description="Atmospheric pressure")
     wind_avg: float = Field(ge=0, description="Average wind speed")
-    wind_direction: float = Field(ge=0, lt=360, description="Wind direction in degrees")
+    wind_direction: float = Field(ge=0, le=360, description="Wind direction in degrees")
     wind_direction_cardinal: str = Field(
         description="Cardinal wind direction", example="NE"
     )
@@ -275,7 +275,7 @@ class CurrentConditions(BaseModel):
     sea_level_pressure: float = Field(description="Current pressure")
     wind_avg: float = Field(ge=0, description="Average wind speed")
     wind_gust: float = Field(ge=0, description="Wind gust speed")
-    wind_direction: float = Field(ge=0, lt=360, description="Wind direction in degrees")
+    wind_direction: float = Field(ge=0, le=360, description="Wind direction in degrees")
     wind_direction_cardinal: str = Field(description="Cardinal wind direction")
     uv: int = Field(ge=0, description="Current UV index")
     time: int = Field(description="Unix timestamp of observation")
@@ -367,7 +367,7 @@ class WeatherObservation(BaseModel):
         ge=0, description="Final minutes of precipitation yesterday"
     )
     wind_avg: float = Field(ge=0, description="Average wind speed")
-    wind_direction: int = Field(ge=0, lt=360, description="Wind direction in degrees")
+    wind_direction: int = Field(ge=0, le=360, description="Wind direction in degrees")
     wind_gust: float = Field(ge=0, description="Wind gust speed")
     wind_lull: float = Field(ge=0, description="Wind lull (minimum wind speed)")
     solar_radiation: float = Field(ge=0, description="Solar radiation intensity")
