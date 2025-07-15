@@ -6,6 +6,10 @@ from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
+from .models import (
+    StationsResponse,
+)
+
 from .rest import (
     api_get_forecast,
     api_get_observation,
@@ -189,7 +193,9 @@ async def get_stations(
     """
 
     try:
-        return await _get_stations_data(ctx, use_cache)
+        data = await _get_stations_data(ctx, use_cache)
+        ctx.info(f"Using pydantic stuff!")
+        return StationsResponse(**data)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
