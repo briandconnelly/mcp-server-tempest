@@ -51,8 +51,6 @@ mcp = FastMCP(
     - weather://tempest/forecast/{station_id}: Get the forecast for a specific weather station. This also includes current conditions.
     - weather://tempest/observations/{station_id}: Get the latest detailed observations for a specific weather station.
     """,
-    # tags={"weather", "sensors", "tempest"},
-    # dependencies=["cachetools", "pydantic", "fastmcp", "weatherflow4py"],
 )
 
 
@@ -64,7 +62,7 @@ def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
     return token
 
 
-async def _get_stations_data(ctx: Context, use_cache: bool = True) -> Dict[str, Any]:
+async def _get_stations_data(ctx: Context, use_cache: bool = True) -> StationsResponse:
     """Shared logic for getting stations data."""
     token = _get_api_token()
 
@@ -72,15 +70,15 @@ async def _get_stations_data(ctx: Context, use_cache: bool = True) -> Dict[str, 
         await ctx.info("Using cached station data")
         return cache["stations"]
 
-    await ctx.info("Getting stations via the Tempest API")
+    await ctx.info("Getting available stations via the Tempest API")
     result = await api_get_stations(token)
     cache["stations"] = StationsResponse(**result)
     return cache["stations"]
 
 
 async def _get_station_id_data(
-    ctx: Context, station_id: int, use_cache: bool = True
-) -> Dict[str, Any]:
+    station_id: int, ctx: Context, use_cache: bool = True
+) -> StationResponse:
     """Shared logic for getting station ID data."""
     token = _get_api_token()
 
@@ -95,6 +93,40 @@ async def _get_station_id_data(
     )
     result = await api_get_station_id(station_id, token)
     cache[cache_id] = StationResponse(**result)
+    return cache[cache_id]
+
+
+async def _get_forecast_data(
+    station_id: int, ctx: Context, use_cache: bool = True
+) -> ForecastResponse:
+    """Shared logic for getting forecast data."""
+    token = _get_api_token()
+
+    cache_id = f"forecast_{station_id}"
+    if use_cache and cache_id in cache:
+        await ctx.info(f"Using cached forecast data for station {station_id}")
+        return cache[cache_id]
+
+    await ctx.info(f"Getting forecast for station {station_id} via the Tempest API")
+    result = await api_get_forecast(station_id, token)
+    cache[cache_id] = ForecastResponse(**result)
+    return cache[cache_id]
+
+
+async def _get_observation_data(
+    station_id: int, ctx: Context, use_cache: bool = True
+) -> ObservationResponse:
+    """Shared logic for getting observation data."""
+    token = _get_api_token()
+
+    cache_id = f"observation_{station_id}"
+    if use_cache and cache_id in cache:
+        await ctx.info(f"Using cached observation data for station {station_id}")
+        return cache[cache_id]
+
+    await ctx.info(f"Getting observations for station {station_id} via the Tempest API")
+    result = await api_get_observation(station_id, token)
+    cache[cache_id] = ObservationResponse(**result)
     return cache[cache_id]
 
 
@@ -124,8 +156,8 @@ async def get_stations(
     time. Only devices with a serial_number value can submit new observations.
     A Device wihout a serial_number indicates that Device is no longer active.
 
-    Parameters:
-        use_cache: Whether to use the cache to store the results of the request
+    Args:
+        use_cache (bool): Whether to use the cache to store the results of the request
           (default: True). Typically, stations do not change frequently, so this
           is a good way to avoid making unnecessary API calls.
 
@@ -163,9 +195,9 @@ async def get_station_id(
 ) -> StationResponse:
     """Get information about a specific weather station
 
-    Parameters:
-        station_id: The station ID to get information for
-        use_cache: Whether to use the cache to store the results of the request (default: True).
+    Args:
+        station_id (int): The station ID to get information for
+        use_cache (bool): Whether to use the cache to store the results of the request (default: True).
           Station configurations do not typicallychange frequently, so this is a good way to avoid
           making unnecessary API calls.
 
@@ -173,7 +205,7 @@ async def get_station_id(
         A StationResponse object containing comprehensive station metadata and device information
     """
     try:
-        return await _get_station_id_data(ctx, station_id, use_cache)
+        return await _get_station_id_data(station_id, ctx, use_cache)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
@@ -188,7 +220,7 @@ async def get_station_id(
 )
 async def get_forecast(
     station_id: Annotated[
-        int, Field(description="The ID of the station to get information for")
+        int, Field(description="The ID of the station to get forecast for")
     ],
     use_cache: Annotated[
         bool,
@@ -201,27 +233,15 @@ async def get_forecast(
 ) -> ForecastResponse:
     """Get the forecast and current conditions for a specific weather station
 
-    Parameters:
-        station_id: The ID of the station to get information for
-        use_cache: Whether to use the cache to store the results of the request (default: True)
+    Args:
+        station_id (int): The ID of the station to get information for
+        use_cache (bool): Whether to use the cache to store the results of the request (default: True)
 
-    This tool resturns a dictionary containing weather forecast and current
-    conditions data with the following structure:
-
+    Returns:
+        ForecastResponse object containing the weather forecast and current conditions
     """
-    token = _get_api_token()
-
-    cache_id = f"forecast_{station_id}"
-    if use_cache and cache_id in cache:
-        await ctx.info(f"Using cached forecast data for station {station_id}")
-        return cache[cache_id]
-
     try:
-        await ctx.info(f"Getting forecast for station {station_id} via the Tempest API")
-        data = await api_get_forecast(station_id, token)
-        obj = ForecastResponse(**data)
-        cache[cache_id] = obj
-        return obj
+        return await _get_forecast_data(station_id, ctx, use_cache)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
@@ -236,7 +256,7 @@ async def get_forecast(
 )
 async def get_observation(
     station_id: Annotated[
-        int, Field(description="The ID of the station to get information for")
+        int, Field(description="The ID of the station to get observations for")
     ],
     use_cache: Annotated[
         bool,
@@ -251,30 +271,34 @@ async def get_observation(
 
     Observations contain the most recent weather conditions at the given station.
 
-    Parameters:
-        station_id: The ID of the station to get information for
-        use_cache: Whether to use the cache to store the results of the request (default: True)
+    Args:
+        station_id (int): The ID of the station to get information for
+        use_cache (bool): Whether to use the cache to store the results of the request (default: True)
 
     Returns:
         ObservationResponse object containing the current weather observations and station metadata
     """
-    token = _get_api_token()
-
-    cache_id = f"observation_{station_id}"
-    if use_cache and cache_id in cache:
-        await ctx.info(f"Using cached observation data for station {station_id}")
-        return cache[cache_id]
 
     try:
-        await ctx.info(
-            f"Getting observations for station {station_id} via the Tempest API"
-        )
-        result = await api_get_observation(station_id, token)
-        obj = ObservationResponse(**result)
-        cache[cache_id] = obj
-        return obj
+        return await _get_observation_data(station_id, ctx, use_cache)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
+
+
+@mcp.tool(
+    annotations={
+        "title": "Clear the Weather Data Cache",
+        "readOnlyHint": False,
+        "openWorldHint": False,
+        "idempotentHint": True,
+    }
+)
+async def clear_cache(ctx: Context = None) -> str:
+    """Clear the weather data cache (development tool)"""
+    cache.clear()
+    if ctx:
+        await ctx.info("Cache cleared")
+    return "Cache cleared successfully"
 
 
 @mcp.resource(
@@ -288,6 +312,9 @@ async def get_stations_resource(ctx: Context = None) -> StationsResponse:
     This resource can be used to get a list of all of the configured weather stations that the user has access to, along with all connected devices.
     Each result contains information about the station, including its name, location, devices, state, and more.
     A Device wihout a serial_number indicates that Device is no longer active.
+
+    Returns:
+        StationsResponse object containing the list of stations and API status
     """
     try:
         return await _get_stations_data(ctx, use_cache=True)
@@ -302,7 +329,7 @@ async def get_stations_resource(ctx: Context = None) -> StationsResponse:
 )
 async def get_station_id_resource(
     station_id: Annotated[
-        int, Field(description="The ID of the station to get information for")
+        int, Field(description="The ID of the station to get station information for")
     ],
     ctx: Context = None,
 ) -> StationResponse:
@@ -313,11 +340,14 @@ async def get_station_id_resource(
     A Device wihout a serial_number indicates that Device is no longer active.
 
     Args:
-        station_id: The ID of the station to get information for
+        station_id (int): The ID of the station to get information for
+
+    Returns:
+        StationResponse object containing comprehensive station metadata and device information
     """
 
     try:
-        return await _get_station_id_data(ctx, station_id, use_cache=True)
+        return await _get_station_id_data(station_id, ctx, use_cache=True)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
@@ -329,7 +359,7 @@ async def get_station_id_resource(
 )
 async def get_forecast_resource(
     station_id: Annotated[
-        int, Field(description="The ID of the station to get information for")
+        int, Field(description="The ID of the station to get forecast for")
     ],
     ctx: Context = None,
 ) -> Dict[str, Any]:
@@ -338,22 +368,14 @@ async def get_forecast_resource(
     This resource allows the user to retrieve the weather forecast from the specified weather station.
 
     Args:
-        station_id: The ID of the station to get information for
+        station_id (int): The ID of the station to get information for
+
+    Returns:
+        ForecastResponse object containing the weather forecast and current conditions
     """
 
-    token = _get_api_token()
-
-    cache_id = f"forecast_{station_id}"
-    if cache_id in cache:
-        await ctx.info(f"Using cached forecast data for station {station_id}")
-        return cache[cache_id]
-
     try:
-        await ctx.info(f"Getting forecast for station {station_id} via the Tempest API")
-        data = await api_get_forecast(station_id, token)
-        obj = ForecastResponse(**data)
-        cache[cache_id] = obj
-        return obj
+        return await _get_forecast_data(station_id, ctx, use_cache=True)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
@@ -365,29 +387,20 @@ async def get_forecast_resource(
 )
 async def get_observation_resource(
     station_id: Annotated[
-        int, Field(description="The ID of the station to get information for")
+        int, Field(description="The ID of the station to get observations for")
     ],
     ctx: Context = None,
 ) -> Dict[str, Any]:
     """Get latest detailed observations for a specific weather station
 
     This resource allows the user to retrieve the weather forecast from the specified weather station.
+
+    Returns:
+        ObservationResponse object containing the current weather observations and station metadata
     """
 
-    token = _get_api_token()
-
-    await ctx.info(f"Getting observations for station {station_id}...")
-
-    # TODO check cache
-
     try:
-        await ctx.info(
-            f"Getting observations for station {station_id} via the Tempest API"
-        )
-        result = await api_get_observation(station_id, token)
-        obj = ObservationResponse(**result)
-        # cache[cache_id] = obj
-        return obj
+        return await _get_observation_data(station_id, ctx, use_cache=True)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
 
