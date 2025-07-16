@@ -104,7 +104,7 @@ async def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
 
 async def _get_stations_data(ctx: Context, use_cache: bool = True) -> StationsResponse:
     """Shared logic for getting stations data."""
-    token = _get_api_token()
+    token = await _get_api_token()
 
     if use_cache and "stations" in cache:
         await ctx.info("Using cached station data")
@@ -120,7 +120,7 @@ async def _get_station_id_data(
     station_id: int, ctx: Context, use_cache: bool = True
 ) -> StationResponse:
     """Shared logic for getting station ID data."""
-    token = _get_api_token()
+    token = await _get_api_token()
 
     cache_id = f"station_id_{station_id}"
 
@@ -140,7 +140,7 @@ async def _get_forecast_data(
     station_id: int, ctx: Context, use_cache: bool = True
 ) -> ForecastResponse:
     """Shared logic for getting forecast data."""
-    token = _get_api_token()
+    token = await _get_api_token()
 
     cache_id = f"forecast_{station_id}"
     if use_cache and cache_id in cache:
@@ -157,7 +157,7 @@ async def _get_observation_data(
     station_id: int, ctx: Context, use_cache: bool = True
 ) -> ObservationResponse:
     """Shared logic for getting observation data."""
-    token = _get_api_token()
+    token = await _get_api_token()
 
     cache_id = f"observation_{station_id}"
     if use_cache and cache_id in cache:
