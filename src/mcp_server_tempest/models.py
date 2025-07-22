@@ -85,7 +85,7 @@ class Location(BaseModel):
     latitude: float = Field(description="Latitude coordinate")
     longitude: float = Field(description="Longitude coordinate")
     timezone: str = Field(
-        description="IANA timezone identifier", example="America/Los_Angeles"
+        description="IANA timezone identifier", examples=["America/Los_Angeles"]
     )
     timezone_offset_minutes: int = Field(
         description="UTC offset in minutes (negative for west of UTC)"
@@ -143,7 +143,7 @@ class StationItem(BaseModel):
     """Station measurement item configuration"""
 
     item: str = Field(
-        description="Type of measurement", example="air_temperature_humidity"
+        description="Type of measurement", examples=["air_temperature_humidity"]
     )
     station_id: int = Field(description="Associated station ID")
     station_item_id: int = Field(description="Unique item identifier")
@@ -172,15 +172,15 @@ class WeatherStation(BaseModel):
 
     station_id: int = Field(description="Unique identifier for the weather station")
     name: str = Field(
-        description="Internal name of the weather station", example="Seattle"
+        description="Internal name of the weather station", examples=["Seattle"]
     )
     public_name: str = Field(
-        description="Public display name of the station", example="Fairview Ave E"
+        description="Public display name of the station", examples=["Fairview Ave E"]
     )
     latitude: float = Field(description="Latitude coordinate of the station")
     longitude: float = Field(description="Longitude coordinate of the station")
     timezone: str = Field(
-        description="IANA timezone identifier", example="America/Los_Angeles"
+        description="IANA timezone identifier", examples=["America/Los_Angeles"]
     )
     timezone_offset_minutes: int = Field(
         description="UTC offset in minutes (negative for west of UTC)"
@@ -217,15 +217,15 @@ class DailyForecast(BaseModel):
         description="Unix timestamp for start of day in local time"
     )
     month_num: int = Field(ge=1, le=12, description="Month number")
-    icon: str = Field(description="Weather icon identifier", example="clear-day")
+    icon: str = Field(description="Weather icon identifier", examples=["clear-day"])
     conditions: str = Field(
-        description="Weather conditions description", example="Clear"
+        description="Weather conditions description", examples=["Clear"]
     )
     precip_probability: int = Field(
         ge=0, le=100, description="Precipitation probability percentage"
     )
     precip_type: Optional[str] = Field(
-        None, description="Type of precipitation", example="rain"
+        None, description="Type of precipitation", examples=["rain"]
     )
     precip_icon: Optional[str] = Field(
         None, description="Precipitation icon identifier"
@@ -253,7 +253,7 @@ class HourlyForecast(BaseModel):
     wind_avg: float = Field(ge=0, description="Average wind speed")
     wind_direction: float = Field(ge=0, le=360, description="Wind direction in degrees")
     wind_direction_cardinal: str = Field(
-        description="Cardinal wind direction", example="NE"
+        description="Cardinal wind direction", examples=["NE"]
     )
     wind_gust: float = Field(ge=0, description="Wind gust speed")
     conditions: str = Field(description="Weather conditions description")
@@ -426,12 +426,12 @@ class ForecastResponse(BaseModel):
         description="Real-time weather observations"
     )
     location_name: str = Field(
-        description="Name of the weather station location", example="Seattle"
+        description="Name of the weather station location", examples=["Seattle"]
     )
     latitude: float = Field(description="Latitude coordinate of the station")
     longitude: float = Field(description="Longitude coordinate of the station")
     timezone: str = Field(
-        description="IANA timezone identifier", example="America/Los_Angeles"
+        description="IANA timezone identifier", examples=["America/Los_Angeles"]
     )
     timezone_offset_minutes: int = Field(description="UTC offset in minutes")
     units: Units = Field(description="Unit specifications for all measurements")
@@ -446,10 +446,10 @@ class ObservationResponse(BaseModel):
     obs: List[WeatherObservation] = Field(description="Array of observation records")
     station_id: int = Field(description="Unique identifier for the weather station")
     station_name: str = Field(
-        description="Name of the weather station", example="Seattle"
+        description="Name of the weather station", examples=["Seattle"]
     )
     public_name: str = Field(
-        description="Public display name of the station", example="Lake Union"
+        description="Public display name of the station", examples=["Lake Union"]
     )
     latitude: float = Field(description="Latitude coordinate of the station")
     longitude: float = Field(description="Longitude coordinate of the station")
@@ -458,7 +458,7 @@ class ObservationResponse(BaseModel):
         description="Whether the station data is publicly accessible"
     )
     timezone: str = Field(
-        description="IANA timezone identifier", example="America/Los_Angeles"
+        description="IANA timezone identifier", examples=["America/Los_Angeles"]
     )
     station_units: Units = Field(description="Unit specifications for all measurements")
     status: APIStatus = Field(description="API response status information")
