@@ -55,7 +55,10 @@ from .rest import (
     api_get_stations,
 )
 
-cache = TTLCache(maxsize=100, ttl=60 * 5)
+cache = TTLCache(
+    maxsize=os.getenv("WEATHERFLOW_CACHE_SIZE", 100),
+    ttl=os.getenv("WEATHERFLOW_CACHE_TTL", 300),
+)
 
 # Create the MCP server
 mcp = FastMCP(
