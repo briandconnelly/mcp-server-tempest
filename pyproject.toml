@@ -19,7 +19,7 @@ classifiers = [
 requires-python = ">=3.13"
 dependencies = [
     "cachetools>=6.1.0",
-    "fastmcp>=2.9.2",
+    "fastmcp>=3.1",
     "pydantic>=2.11.7",
     "weatherflow4py>=1.4.1",
 ]
@@ -27,6 +27,24 @@ dependencies = [
 [project.scripts]
 mcp-server-tempest = "mcp_server_tempest:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.25",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.11",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

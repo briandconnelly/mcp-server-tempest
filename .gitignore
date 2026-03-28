@@ -12,3 +12,9 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Tooling
+.ruff_cache/
+
+# OS
+.DS_Store

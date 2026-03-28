@@ -33,13 +33,18 @@ Example Usage:
     forecast = await client.read_resource("weather://tempest/forecast/12345")
 """
 
+import logging
 import os
-from typing import Annotated, Any, Dict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Annotated
 
 from cachetools import TTLCache
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import Field
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from .models import (
     ForecastResponse,
@@ -47,7 +52,6 @@ from .models import (
     StationResponse,
     StationsResponse,
 )
-
 from .rest import (
     api_get_forecast,
     api_get_observation,
@@ -55,44 +59,62 @@ from .rest import (
     api_get_stations,
 )
 
+logger = logging.getLogger(__name__)
+
 cache = TTLCache(
     maxsize=int(os.getenv("WEATHERFLOW_CACHE_SIZE", 100)),
     ttl=int(os.getenv("WEATHERFLOW_CACHE_TTL", 300)),
 )
 
+
+@asynccontextmanager
+async def lifespan(server: FastMCP) -> AsyncIterator[None]:
+    """Validate configuration on startup."""
+    token = os.getenv("WEATHERFLOW_API_TOKEN")
+    if not token:
+        logger.warning(
+            "WEATHERFLOW_API_TOKEN is not set. Get a token at https://tempestwx.com/settings/tokens"
+        )
+    else:
+        logger.info("WeatherFlow Tempest server starting")
+    yield
+
+
 # Create the MCP server
 mcp = FastMCP(
     name="WeatherFlow Tempest API Server",
-    instructions="""
+    instructions="""\
     WeatherFlow Tempest weather station data server.
-    
-    🚀 Quick Start:
+
+    Quick Start:
     1. Use get_stations() to see your available weather stations
     2. Use get_observation(station_id) to get current conditions
     3. Use get_forecast(station_id) to get weather forecasts
-    
-    💡 Pro Tips:
+
+    Pro Tips:
     - Data is cached for 5 minutes to improve performance
     - All measurements are in the units configured for each station
     - Use the 'units' or 'station_units' fields to understand the unit system
     - Station IDs are found in the get_stations() response
-    
-    🔧 Available Tools:
+
+    Available Tools:
     - get_stations(): List your weather stations
-    - get_observation(station_id): Current weather conditions  
+    - get_observation(station_id): Current weather conditions
     - get_forecast(station_id): Weather forecast
     - get_station_id(station_id): Station details and devices
     - clear_cache(): Clear the data cache (for testing)
-    
-    📊 Resource URIs:
+
+    Resource URIs:
     - weather://tempest/stations - List all stations
     - weather://tempest/observations/{station_id} - Current conditions
     - weather://tempest/forecast/{station_id} - Weather forecast
-    - weather://tempest/help - Server documentation
-    
-    🔑 Setup: Set WEATHERFLOW_API_TOKEN environment variable
+
+    Setup: Set WEATHERFLOW_API_TOKEN environment variable
     Get your token at: https://tempestwx.com/settings/tokens
     """,
+    lifespan=lifespan,
+    mask_error_details=True,
+    on_duplicate="error",
 )
 
 
@@ -113,9 +135,11 @@ async def _get_stations_data(ctx: Context, use_cache: bool = True) -> StationsRe
         await ctx.info("Using cached station data")
         return cache["stations"]
 
+    await ctx.report_progress(progress=0, total=1)
     await ctx.info("Getting available stations via the Tempest API")
     result = await api_get_stations(token)
     cache["stations"] = StationsResponse(**result)
+    await ctx.report_progress(progress=1, total=1)
     return cache["stations"]
 
 
@@ -131,11 +155,11 @@ async def _get_station_id_data(
         await ctx.info(f"Using cached station data for station {station_id}")
         return cache[cache_id]
 
-    await ctx.info(
-        f"Getting station ID data for station {station_id} via the Tempest API"
-    )
+    await ctx.report_progress(progress=0, total=1)
+    await ctx.info(f"Getting station ID data for station {station_id} via the Tempest API")
     result = await api_get_station_id(station_id, token)
     cache[cache_id] = StationResponse(**result)
+    await ctx.report_progress(progress=1, total=1)
     return cache[cache_id]
 
 
@@ -150,9 +174,11 @@ async def _get_forecast_data(
         await ctx.info(f"Using cached forecast data for station {station_id}")
         return cache[cache_id]
 
+    await ctx.report_progress(progress=0, total=1)
     await ctx.info(f"Getting forecast for station {station_id} via the Tempest API")
     result = await api_get_forecast(station_id, token)
     cache[cache_id] = ForecastResponse(**result)
+    await ctx.report_progress(progress=1, total=1)
     return cache[cache_id]
 
 
@@ -167,26 +193,29 @@ async def _get_observation_data(
         await ctx.info(f"Using cached observation data for station {station_id}")
         return cache[cache_id]
 
+    await ctx.report_progress(progress=0, total=1)
     await ctx.info(f"Getting observations for station {station_id} via the Tempest API")
     result = await api_get_observation(station_id, token)
     cache[cache_id] = ObservationResponse(**result)
+    await ctx.report_progress(progress=1, total=1)
     return cache[cache_id]
 
 
 @mcp.tool(
+    tags={"weather", "stations"},
     annotations={
         "title": "Get Weather Stations",
         "readOnlyHint": True,
         "openWorldHint": True,
-        "idempotentHint": False,
-    }
+        "idempotentHint": True,
+    },
 )
 async def get_stations(
     use_cache: Annotated[
         bool,
         Field(
             default=True,
-            description="Whether to use the cache to store the results of the request (default: True)",
+            description="Whether to use cached results (default: True)",
         ),
     ],
     ctx: Context = None,
@@ -249,22 +278,21 @@ async def get_stations(
 
 
 @mcp.tool(
+    tags={"weather", "stations"},
     annotations={
         "title": "Get Weather Station Information",
         "readOnlyHint": True,
         "openWorldHint": True,
-        "idempotentHint": False,
-    }
+        "idempotentHint": True,
+    },
 )
 async def get_station_id(
-    station_id: Annotated[
-        int, Field(description="The station ID to get information for", gt=0)
-    ],
+    station_id: Annotated[int, Field(description="The station ID to get information for", gt=0)],
     use_cache: Annotated[
         bool,
         Field(
             default=True,
-            description="Whether to use the cache to store the results of the request (default: True)",
+            description="Whether to use cached results (default: True)",
         ),
     ],
     ctx: Context = None,
@@ -338,12 +366,13 @@ async def get_station_id(
 
 
 @mcp.tool(
+    tags={"weather", "forecast"},
     annotations={
         "title": "Get Weather Forecast for a Station",
         "readOnlyHint": True,
         "openWorldHint": True,
-        "idempotentHint": False,
-    }
+        "idempotentHint": True,
+    },
 )
 async def get_forecast(
     station_id: Annotated[
@@ -353,7 +382,7 @@ async def get_forecast(
         bool,
         Field(
             default=True,
-            description="Whether to use the cache to store the results of the request (default: True)",
+            description="Whether to use cached results (default: True)",
         ),
     ],
     ctx: Context = None,
@@ -436,12 +465,13 @@ async def get_forecast(
 
 
 @mcp.tool(
+    tags={"weather", "observations"},
     annotations={
         "title": "Get Current Weather Observations for a Station",
         "readOnlyHint": True,
         "openWorldHint": True,
-        "idempotentHint": False,
-    }
+        "idempotentHint": True,
+    },
 )
 async def get_observation(
     station_id: Annotated[
@@ -451,7 +481,7 @@ async def get_observation(
         bool,
         Field(
             default=True,
-            description="Whether to use the cache to store the results of the request (default: True)",
+            description="Whether to use cached results (default: True)",
         ),
     ],
     ctx: Context = None,
@@ -491,12 +521,13 @@ async def get_observation(
 
 
 @mcp.tool(
+    tags={"admin"},
     annotations={
         "title": "Clear the Weather Data Cache",
         "readOnlyHint": False,
         "openWorldHint": False,
         "idempotentHint": True,
-    }
+    },
 )
 async def clear_cache(ctx: Context = None) -> str:
     """Clear the weather data cache (development tool)"""
@@ -514,9 +545,11 @@ async def clear_cache(ctx: Context = None) -> str:
 async def get_stations_resource(ctx: Context = None) -> StationsResponse:
     """Get a list of all your WeatherFlow stations.
 
-    This resource can be used to get a list of all of the configured weather stations that the user has access to, along with all connected devices.
-    Each result contains information about the station, including its name, location, devices, state, and more.
-    A Device wihout a serial_number indicates that Device is no longer active.
+    This resource returns all configured weather stations the user has
+    access to, along with all connected devices. Each result contains
+    information about the station, including its name, location, devices,
+    state, and more. A Device without a serial_number indicates that
+    Device is no longer active.
 
     Returns:
         StationsResponse object containing the list of stations and API status
@@ -539,11 +572,11 @@ async def get_station_id_resource(
     ],
     ctx: Context = None,
 ) -> StationResponse:
-    """Get information and devices for a specific weather station
+    """Get information and devices for a specific weather station.
 
-    This resource can be used to get a list of all of the configured weather stations that the user has access to, along with all connected devices.
-    Each result contains information about the station, including its name, location, devices, state, and more.
-    A Device wihout a serial_number indicates that Device is no longer active.
+    This resource retrieves detailed information about a specific weather station, including its
+    configuration, connected devices, and status. A Device without a serial_number indicates
+    that Device is no longer active.
 
     Args:
         station_id (int): The ID of the station to get information for
@@ -568,13 +601,14 @@ async def get_forecast_resource(
         int, Field(description="The ID of the station to get forecast for", gt=0)
     ],
     ctx: Context = None,
-) -> Dict[str, Any]:
-    """Get information and devices for a specific weather station
+) -> ForecastResponse:
+    """Get the weather forecast for a specific weather station.
 
-    This resource allows the user to retrieve the weather forecast from the specified weather station.
+    This resource retrieves comprehensive weather forecast data including current
+    conditions, hourly forecasts, and daily summaries.
 
     Args:
-        station_id (int): The ID of the station to get information for
+        station_id (int): The ID of the station to get the forecast for
 
     Returns:
         ForecastResponse object containing the weather forecast and current conditions
@@ -596,10 +630,10 @@ async def get_observation_resource(
         int, Field(description="The ID of the station to get observations for", gt=0)
     ],
     ctx: Context = None,
-) -> Dict[str, Any]:
-    """Get latest detailed observations for a specific weather station
+) -> ObservationResponse:
+    """Get the latest detailed observations for a specific weather station.
 
-    This resource allows the user to retrieve the weather forecast from the specified weather station.
+    This resource retrieves the most recent weather observations from the specified weather station.
 
     Returns:
         ObservationResponse object containing the current weather observations and station metadata
@@ -609,6 +643,12 @@ async def get_observation_resource(
         return await _get_observation_data(station_id, ctx, use_cache=True)
     except Exception as e:
         raise ToolError(f"Request failed: {str(e)}")
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request: Request) -> JSONResponse:
+    """Health check endpoint for monitoring."""
+    return JSONResponse({"status": "ok"})
 
 
 if __name__ == "__main__":

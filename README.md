@@ -208,6 +208,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/mcp-server-tempest/issues)
+- **Issues**: [GitHub Issues](https://github.com/briandconnelly/mcp-server-tempest/issues)
 - **Documentation**: [WeatherFlow API Docs](https://weatherflow.github.io/Tempest/api/)
 - **Community**: [WeatherFlow Community](https://community.weatherflow.com/)
