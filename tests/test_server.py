@@ -6,12 +6,16 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastmcp.exceptions import ToolError
 
+import mcp_server_tempest.server as server_module
+from mcp_server_tempest.cache import DiskCache
 from mcp_server_tempest.server import (
     _get_api_token,
+    _get_disk_cache,
     _get_forecast_data,
     _get_observation_data,
     _get_station_id_data,
     _get_stations_data,
+    _int_env,
     cache,
     clear_cache,
     get_forecast,
@@ -122,10 +126,13 @@ SAMPLE_OBSERVATION_DATA = {
 
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    """Clear cache before each test."""
+    """Clear caches and disable disk cache for test isolation."""
     cache.clear()
-    yield
+    server_module.disk_cache = None
+    with patch.object(server_module, "_get_disk_cache", return_value=None):
+        yield
     cache.clear()
+    server_module.disk_cache = None
 
 
 @pytest.fixture()
@@ -146,24 +153,24 @@ def _set_token():
 
 
 class TestGetApiToken:
-    async def test_returns_token_when_set(self):
+    def test_returns_token_when_set(self):
         with patch.dict(os.environ, {"WEATHERFLOW_API_TOKEN": "test-token-123"}):
-            token = await _get_api_token()
+            token = _get_api_token()
             assert token == "test-token-123"
 
-    async def test_raises_when_not_set(self):
+    def test_raises_when_not_set(self):
         with patch.dict(os.environ, {}, clear=True):
             with pytest.raises(ToolError, match="not configured"):
-                await _get_api_token()
+                _get_api_token()
 
-    async def test_raises_when_empty(self):
+    def test_raises_when_empty(self):
         with patch.dict(os.environ, {"WEATHERFLOW_API_TOKEN": ""}):
             with pytest.raises(ToolError, match="not configured"):
-                await _get_api_token()
+                _get_api_token()
 
-    async def test_custom_env_var(self):
+    def test_custom_env_var(self):
         with patch.dict(os.environ, {"MY_TOKEN": "custom-token"}):
-            token = await _get_api_token(env_var="MY_TOKEN")
+            token = _get_api_token(env_var="MY_TOKEN")
             assert token == "custom-token"
 
 
@@ -477,3 +484,134 @@ class TestHealthCheck:
         response = await health_check(request)
         assert response.status_code == 200
         assert response.body == b'{"status":"ok"}'
+
+
+# -- Tests for _int_env --
+
+
+class TestIntEnv:
+    def test_returns_default_when_unset(self):
+        assert _int_env("NONEXISTENT_VAR_12345", 42) == 42
+
+    def test_returns_parsed_value(self, monkeypatch):
+        monkeypatch.setenv("TEST_INT_VAR", "200")
+        assert _int_env("TEST_INT_VAR", 42) == 200
+
+    def test_returns_default_on_invalid(self, monkeypatch):
+        monkeypatch.setenv("TEST_INT_VAR", "not_a_number")
+        assert _int_env("TEST_INT_VAR", 42) == 42
+
+
+# -- Tests for _get_disk_cache --
+
+
+class TestGetDiskCache:
+    def test_returns_none_without_token(self, monkeypatch):
+        monkeypatch.delenv("WEATHERFLOW_API_TOKEN", raising=False)
+        server_module.disk_cache = None
+        with patch.object(server_module, "_get_disk_cache", wraps=_get_disk_cache):
+            result = _get_disk_cache()
+        assert result is None
+
+    def test_creates_disk_cache_with_token(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WEATHERFLOW_API_TOKEN", "test-token")
+        monkeypatch.setattr(
+            "mcp_server_tempest.cache.user_cache_dir",
+            lambda app_name: str(tmp_path),
+        )
+        server_module.disk_cache = None
+        result = _get_disk_cache()
+        assert isinstance(result, DiskCache)
+
+    def test_returns_existing_instance(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "mcp_server_tempest.cache.user_cache_dir",
+            lambda app_name: str(tmp_path),
+        )
+        dc = DiskCache(token="test-token")
+        server_module.disk_cache = dc
+        result = _get_disk_cache()
+        assert result is dc
+
+
+# -- Tests for ToolError passthrough --
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestToolErrorPassthrough:
+    async def test_get_stations_preserves_tool_error(self, mock_ctx):
+        with (
+            patch(
+                "mcp_server_tempest.server.api_get_stations",
+                side_effect=ToolError("specific error"),
+            ),
+            pytest.raises(ToolError, match="specific error"),
+        ):
+            await get_stations(use_cache=False, ctx=mock_ctx)
+
+    async def test_get_stations_no_token_preserves_message(self, mock_ctx):
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(ToolError, match="not configured"):
+                await get_stations(use_cache=False, ctx=mock_ctx)
+
+
+# -- Tests for disk cache integration in server --
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestDiskCacheIntegration:
+    async def test_stations_falls_back_to_disk_cache(self, tmp_path, mock_ctx, monkeypatch):
+        monkeypatch.setattr(
+            "mcp_server_tempest.cache.user_cache_dir",
+            lambda app_name: str(tmp_path),
+        )
+        from mcp_server_tempest.models import StationsResponse
+
+        dc = DiskCache(token="test-token", ttl=3600)
+        stations_data = StationsResponse(**SAMPLE_STATION_DATA)
+        dc.set("stations", stations_data)
+
+        with patch.object(server_module, "_get_disk_cache", return_value=dc):
+            result = await _get_stations_data(mock_ctx, use_cache=True)
+            assert result.stations[0].station_id == 12345
+            mock_ctx.info.assert_called_with("Using disk-cached station data")
+
+    async def test_stations_api_writes_to_disk_cache(self, tmp_path, mock_ctx, monkeypatch):
+        monkeypatch.setattr(
+            "mcp_server_tempest.cache.user_cache_dir",
+            lambda app_name: str(tmp_path),
+        )
+        dc = DiskCache(token="test-token", ttl=3600)
+
+        with (
+            patch.object(server_module, "_get_disk_cache", return_value=dc),
+            patch(
+                "mcp_server_tempest.server.api_get_stations",
+                return_value=SAMPLE_STATION_DATA,
+            ),
+        ):
+            await _get_stations_data(mock_ctx, use_cache=False)
+
+        from mcp_server_tempest.models import StationsResponse
+
+        cached = dc.get("stations", StationsResponse)
+        assert cached is not None
+        assert cached.stations[0].station_id == 12345
+
+    async def test_station_id_falls_back_to_disk_cache(self, tmp_path, mock_ctx, monkeypatch):
+        monkeypatch.setattr(
+            "mcp_server_tempest.cache.user_cache_dir",
+            lambda app_name: str(tmp_path),
+        )
+        from mcp_server_tempest.models import StationResponse
+
+        dc = DiskCache(token="test-token", ttl=3600)
+        station_data = StationResponse(**SAMPLE_SINGLE_STATION_DATA)
+        dc.set("station_id_12345", station_data)
+
+        with patch.object(server_module, "_get_disk_cache", return_value=dc):
+            result = await _get_station_id_data(12345, mock_ctx, use_cache=True)
+            assert result.station_id == 12345
+            mock_ctx.info.assert_called_with(
+                "Using disk-cached station data for station 12345"
+            )

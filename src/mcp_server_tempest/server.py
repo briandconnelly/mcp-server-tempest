@@ -15,7 +15,7 @@ Features:
 Setup:
     1. Get an API token from https://tempestwx.com/settings/tokens
     2. Set the WEATHERFLOW_API_TOKEN environment variable
-    3. Run the server: python -m weatherflow_mcp
+    3. Run the server: mcp-server-tempest
 
 Environment Variables:
     WEATHERFLOW_API_TOKEN: Your WeatherFlow API token (required)
@@ -46,6 +46,7 @@ from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from .cache import DiskCache
 from .models import (
     ForecastResponse,
     ObservationResponse,
@@ -61,10 +62,35 @@ from .rest import (
 
 logger = logging.getLogger(__name__)
 
+def _int_env(name: str, default: int) -> int:
+    """Read an integer from an environment variable with a default."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning("%s=%r is not a valid integer, using default %d", name, value, default)
+        return default
+
+
 cache = TTLCache(
-    maxsize=int(os.getenv("WEATHERFLOW_CACHE_SIZE", 100)),
-    ttl=int(os.getenv("WEATHERFLOW_CACHE_TTL", 300)),
+    maxsize=_int_env("WEATHERFLOW_CACHE_SIZE", 100),
+    ttl=_int_env("WEATHERFLOW_CACHE_TTL", 300),
 )
+
+disk_cache: DiskCache | None = None
+
+
+def _get_disk_cache() -> DiskCache | None:
+    """Get or lazily initialize the disk cache, scoped to the current API token."""
+    global disk_cache  # noqa: PLW0603
+    if disk_cache is not None:
+        return disk_cache
+    token = os.getenv("WEATHERFLOW_API_TOKEN")
+    if token:
+        disk_cache = DiskCache(token)
+    return disk_cache
 
 
 @asynccontextmanager
@@ -118,7 +144,7 @@ mcp = FastMCP(
 )
 
 
-async def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
+def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
     if not (token := os.getenv(env_var)):
         raise ToolError(
             f"WeatherFlow API token not configured. Please set the {env_var} environment variable. "
@@ -129,16 +155,26 @@ async def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
 
 async def _get_stations_data(ctx: Context, use_cache: bool = True) -> StationsResponse:
     """Shared logic for getting stations data."""
-    token = await _get_api_token()
+    token = _get_api_token()
 
     if use_cache and "stations" in cache:
         await ctx.info("Using cached station data")
         return cache["stations"]
 
+    dc = _get_disk_cache()
+    if use_cache and dc:
+        hit = dc.get("stations", StationsResponse)
+        if hit is not None:
+            await ctx.info("Using disk-cached station data")
+            cache["stations"] = hit
+            return hit
+
     await ctx.report_progress(progress=0, total=1)
     await ctx.info("Getting available stations via the Tempest API")
     result = await api_get_stations(token)
     cache["stations"] = StationsResponse(**result)
+    if dc:
+        dc.set("stations", cache["stations"])
     await ctx.report_progress(progress=1, total=1)
     return cache["stations"]
 
@@ -147,7 +183,7 @@ async def _get_station_id_data(
     station_id: int, ctx: Context, use_cache: bool = True
 ) -> StationResponse:
     """Shared logic for getting station ID data."""
-    token = await _get_api_token()
+    token = _get_api_token()
 
     cache_id = f"station_id_{station_id}"
 
@@ -155,10 +191,20 @@ async def _get_station_id_data(
         await ctx.info(f"Using cached station data for station {station_id}")
         return cache[cache_id]
 
+    dc = _get_disk_cache()
+    if use_cache and dc:
+        hit = dc.get(cache_id, StationResponse)
+        if hit is not None:
+            await ctx.info(f"Using disk-cached station data for station {station_id}")
+            cache[cache_id] = hit
+            return hit
+
     await ctx.report_progress(progress=0, total=1)
     await ctx.info(f"Getting station ID data for station {station_id} via the Tempest API")
     result = await api_get_station_id(station_id, token)
     cache[cache_id] = StationResponse(**result)
+    if dc:
+        dc.set(cache_id, cache[cache_id])
     await ctx.report_progress(progress=1, total=1)
     return cache[cache_id]
 
@@ -167,7 +213,7 @@ async def _get_forecast_data(
     station_id: int, ctx: Context, use_cache: bool = True
 ) -> ForecastResponse:
     """Shared logic for getting forecast data."""
-    token = await _get_api_token()
+    token = _get_api_token()
 
     cache_id = f"forecast_{station_id}"
     if use_cache and cache_id in cache:
@@ -186,7 +232,7 @@ async def _get_observation_data(
     station_id: int, ctx: Context, use_cache: bool = True
 ) -> ObservationResponse:
     """Shared logic for getting observation data."""
-    token = await _get_api_token()
+    token = _get_api_token()
 
     cache_id = f"observation_{station_id}"
     if use_cache and cache_id in cache:
@@ -273,8 +319,10 @@ async def get_stations(
 
     try:
         return await _get_stations_data(ctx, use_cache)
+    except ToolError:
+        raise
     except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}")
+        raise ToolError(f"Request failed: {str(e)}") from e
 
 
 @mcp.tool(
@@ -361,8 +409,10 @@ async def get_station_id(
     """
     try:
         return await _get_station_id_data(station_id, ctx, use_cache)
+    except ToolError:
+        raise
     except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}")
+        raise ToolError(f"Request failed: {str(e)}") from e
 
 
 @mcp.tool(
@@ -460,8 +510,10 @@ async def get_forecast(
     """
     try:
         return await _get_forecast_data(station_id, ctx, use_cache)
+    except ToolError:
+        raise
     except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}")
+        raise ToolError(f"Request failed: {str(e)}") from e
 
 
 @mcp.tool(
@@ -516,8 +568,10 @@ async def get_observation(
 
     try:
         return await _get_observation_data(station_id, ctx, use_cache)
+    except ToolError:
+        raise
     except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}")
+        raise ToolError(f"Request failed: {str(e)}") from e
 
 
 @mcp.tool(
@@ -532,6 +586,9 @@ async def get_observation(
 async def clear_cache(ctx: Context = None) -> str:
     """Clear the weather data cache (development tool)"""
     cache.clear()
+    dc = _get_disk_cache()
+    if dc:
+        dc.clear()
     if ctx:
         await ctx.info("Cache cleared")
     return "Cache cleared successfully"
@@ -556,8 +613,10 @@ async def get_stations_resource(ctx: Context = None) -> StationsResponse:
     """
     try:
         return await _get_stations_data(ctx, use_cache=True)
+    except ToolError:
+        raise
     except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}")
+        raise ToolError(f"Request failed: {str(e)}") from e
 
 
 @mcp.resource(
@@ -587,8 +646,10 @@ async def get_station_id_resource(
 
     try:
         return await _get_station_id_data(station_id, ctx, use_cache=True)
+    except ToolError:
+        raise
     except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}")
+        raise ToolError(f"Request failed: {str(e)}") from e
 
 
 @mcp.resource(
@@ -616,8 +677,10 @@ async def get_forecast_resource(
 
     try:
         return await _get_forecast_data(station_id, ctx, use_cache=True)
+    except ToolError:
+        raise
     except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}")
+        raise ToolError(f"Request failed: {str(e)}") from e
 
 
 @mcp.resource(
@@ -641,8 +704,10 @@ async def get_observation_resource(
 
     try:
         return await _get_observation_data(station_id, ctx, use_cache=True)
+    except ToolError:
+        raise
     except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}")
+        raise ToolError(f"Request failed: {str(e)}") from e
 
 
 @mcp.custom_route("/health", methods=["GET"])

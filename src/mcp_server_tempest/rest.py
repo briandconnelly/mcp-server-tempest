@@ -10,6 +10,8 @@ async def api_get_stations(token: str) -> dict:
 async def api_get_station_id(station_id: int, token: str) -> dict:
     async with WeatherFlowRestAPI(token) as api:
         station = await api.async_get_station(station_id=station_id)
+        if not station:
+            raise ValueError(f"No station found with ID {station_id}")
         return station[0].to_dict()
 
 

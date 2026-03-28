@@ -2,6 +2,8 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from mcp_server_tempest.rest import (
     api_get_forecast,
     api_get_observation,
@@ -41,6 +43,14 @@ class TestApiGetStationId:
             result = await api_get_station_id(123, "fake-token")
             assert result == {"station_id": 123}
             mock_api.async_get_station.assert_called_once_with(station_id=123)
+
+    async def test_raises_on_empty_response(self):
+        mock_api, _ = _mock_api_context({})
+        mock_api.async_get_station = AsyncMock(return_value=[])
+
+        with patch("mcp_server_tempest.rest.WeatherFlowRestAPI", return_value=mock_api):
+            with pytest.raises(ValueError, match="No station found"):
+                await api_get_station_id(99999, "fake-token")
 
 
 class TestApiGetForecast:

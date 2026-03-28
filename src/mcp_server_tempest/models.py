@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -7,6 +6,8 @@ from pydantic import BaseModel, Field
 # Enums for better type safety
 class DeviceType(str, Enum):
     TEMPEST = "ST"  # Tempest outdoor sensor
+    AIR = "AR"  # Air sensor (temperature, humidity, pressure, lightning)
+    SKY = "SK"  # Sky sensor (wind, rain, solar radiation, UV)
     HUB = "HB"  # Hub
 
 
@@ -74,7 +75,7 @@ class Units(BaseModel):
     units_pressure: PressureUnit = Field(description="Pressure units")
     units_precip: PrecipUnit = Field(description="Precipitation units")
     units_distance: DistanceUnit = Field(description="Distance units")
-    units_direction: Optional[DirectionUnit] = Field(None, description="Direction format")
+    units_direction: DirectionUnit | None = Field(None, description="Direction format")
     units_other: UnitSystem = Field(description="General unit system")
 
 
@@ -96,13 +97,13 @@ class DeviceMeta(BaseModel):
     agl: float = Field(description="Height above ground level in meters")
     environment: Environment = Field(description="Installation environment")
     name: str = Field(description="Device name/serial number")
-    wifi_network_name: Optional[str] = Field(None, description="Connected WiFi network name")
+    wifi_network_name: str | None = Field(None, description="Connected WiFi network name")
 
 
 class DeviceSettings(BaseModel):
     """Device-specific configuration settings"""
 
-    show_precip_final: Optional[bool] = Field(
+    show_precip_final: bool | None = Field(
         None, description="Whether to show final precipitation values"
     )
 
@@ -112,13 +113,13 @@ class Device(BaseModel):
 
     device_id: int = Field(description="Unique device identifier")
     device_type: DeviceType = Field(description="Type of device")
-    serial_number: Optional[str] = Field(
+    serial_number: str | None = Field(
         None, description="Device serial number (None if inactive)"
     )
     firmware_revision: str = Field(description="Current firmware version")
     hardware_revision: str = Field(description="Hardware revision number")
     device_meta: DeviceMeta = Field(description="Device-specific metadata")
-    device_settings: Optional[DeviceSettings] = Field(
+    device_settings: DeviceSettings | None = Field(
         None, description="Device configuration settings"
     )
 
@@ -141,7 +142,7 @@ class StationItem(BaseModel):
     location_id: int = Field(description="Location identifier")
     location_item_id: int = Field(description="Location-specific item identifier")
     device_id: int = Field(description="Device providing this measurement")
-    sort: Optional[int] = Field(None, description="Display sort order")
+    sort: int | None = Field(None, description="Display sort order")
 
 
 class StationCapability(BaseModel):
@@ -150,8 +151,8 @@ class StationCapability(BaseModel):
     capability: str = Field(description="Measurement capability type")
     device_id: int = Field(description="Device providing this capability")
     environment: Environment = Field(description="Operating environment")
-    agl: Optional[float] = Field(None, description="Height above ground level in meters")
-    show_precip_final: Optional[bool] = Field(None, description="Precipitation display setting")
+    agl: float | None = Field(None, description="Height above ground level in meters")
+    show_precip_final: bool | None = Field(None, description="Precipitation display setting")
 
 
 class WeatherStation(BaseModel):
@@ -172,11 +173,11 @@ class WeatherStation(BaseModel):
     last_modified_epoch: int = Field(description="Unix timestamp of last station modification")
     is_local_mode: bool = Field(description="Whether the station is operating in local mode")
     station_meta: StationMeta = Field(description="Station metadata")
-    devices: List[Device] = Field(description="Array of devices connected to the station")
-    station_items: List[StationItem] = Field(
+    devices: list[Device] = Field(description="Array of devices connected to the station")
+    station_items: list[StationItem] = Field(
         description="Configuration of station measurement items"
     )
-    capabilities: Optional[List[StationCapability]] = Field(
+    capabilities: list[StationCapability] | None = Field(
         None, description="Station measurement capabilities"
     )
 
@@ -195,8 +196,8 @@ class DailyForecast(BaseModel):
     precip_probability: int = Field(
         ge=0, le=100, description="Precipitation probability percentage"
     )
-    precip_type: Optional[str] = Field(None, description="Type of precipitation", examples=["rain"])
-    precip_icon: Optional[str] = Field(None, description="Precipitation icon identifier")
+    precip_type: str | None = Field(None, description="Type of precipitation", examples=["rain"])
+    precip_icon: str | None = Field(None, description="Precipitation icon identifier")
     sunrise: int = Field(description="Unix timestamp for sunrise")
     sunset: int = Field(description="Unix timestamp for sunset")
 
@@ -212,7 +213,7 @@ class HourlyForecast(BaseModel):
     precip_probability: int = Field(
         ge=0, le=100, description="Precipitation probability percentage"
     )
-    precip_type: Optional[str] = Field(None, description="Type of precipitation")
+    precip_type: str | None = Field(None, description="Type of precipitation")
     relative_humidity: int = Field(ge=0, le=100, description="Relative humidity percentage")
     sea_level_pressure: float = Field(description="Atmospheric pressure")
     wind_avg: float = Field(ge=0, description="Average wind speed")
@@ -241,34 +242,34 @@ class CurrentConditions(BaseModel):
     uv: int = Field(ge=0, description="Current UV index")
     time: int = Field(description="Unix timestamp of observation")
     # Additional measurements
-    solar_radiation: Optional[float] = Field(None, description="Solar radiation intensity")
-    brightness: Optional[float] = Field(None, description="Light intensity in lux")
-    dew_point: Optional[float] = Field(None, description="Dew point temperature")
-    wet_bulb_temperature: Optional[float] = Field(None, description="Wet bulb temperature")
+    solar_radiation: float | None = Field(None, description="Solar radiation intensity")
+    brightness: float | None = Field(None, description="Light intensity in lux")
+    dew_point: float | None = Field(None, description="Dew point temperature")
+    wet_bulb_temperature: float | None = Field(None, description="Wet bulb temperature")
     # Lightning data
-    lightning_strike_last_epoch: Optional[int] = Field(
+    lightning_strike_last_epoch: int | None = Field(
         None, description="Unix timestamp of last lightning strike"
     )
-    lightning_strike_last_distance: Optional[int] = Field(
+    lightning_strike_last_distance: int | None = Field(
         None, description="Distance to last lightning strike"
     )
-    lightning_strike_count: Optional[int] = Field(
+    lightning_strike_count: int | None = Field(
         None, description="Current lightning strike count"
     )
-    lightning_strike_count_last_1hr: Optional[int] = Field(
+    lightning_strike_count_last_1hr: int | None = Field(
         None, description="Lightning strikes in last hour"
     )
-    lightning_strike_count_last_3hr: Optional[int] = Field(
+    lightning_strike_count_last_3hr: int | None = Field(
         None, description="Lightning strikes in last 3 hours"
     )
     # Precipitation accumulations
-    precip_accum_last_1hr: Optional[float] = Field(
+    precip_accum_last_1hr: float | None = Field(
         None, description="Precipitation accumulation in last hour"
     )
-    precip_accum_local_day: Optional[float] = Field(
+    precip_accum_local_day: float | None = Field(
         None, description="Precipitation accumulation for current local day"
     )
-    precip_accum_local_yesterday: Optional[float] = Field(
+    precip_accum_local_yesterday: float | None = Field(
         None, description="Precipitation accumulation for yesterday"
     )
 
@@ -276,8 +277,8 @@ class CurrentConditions(BaseModel):
 class Forecast(BaseModel):
     """Weather forecast data"""
 
-    daily: List[DailyForecast] = Field(description="10-day daily forecast")
-    hourly: List[HourlyForecast] = Field(description="Detailed hourly forecast")
+    daily: list[DailyForecast] = Field(description="10-day daily forecast")
+    hourly: list[HourlyForecast] = Field(description="Detailed hourly forecast")
 
 
 # Observation Models
@@ -324,10 +325,10 @@ class WeatherObservation(BaseModel):
     solar_radiation: float = Field(ge=0, description="Solar radiation intensity")
     uv: float = Field(ge=0, description="UV index")
     brightness: float = Field(ge=0, description="Light intensity in lux")
-    lightning_strike_last_epoch: Optional[int] = Field(
+    lightning_strike_last_epoch: int | None = Field(
         None, description="Unix timestamp of last lightning strike"
     )
-    lightning_strike_last_distance: Optional[int] = Field(
+    lightning_strike_last_distance: int | None = Field(
         None, description="Distance to last lightning strike"
     )
     lightning_strike_count: int = Field(ge=0, description="Current lightning strike count")
@@ -349,7 +350,7 @@ class WeatherObservation(BaseModel):
 class StationsResponse(BaseModel):
     """Response containing multiple weather stations"""
 
-    stations: List[WeatherStation] = Field(description="Array of weather station objects")
+    stations: list[WeatherStation] = Field(description="Array of weather station objects")
     status: APIStatus = Field(description="API response status information")
 
 
@@ -377,8 +378,8 @@ class ForecastResponse(BaseModel):
 class ObservationResponse(BaseModel):
     """Weather observation response"""
 
-    outdoor_keys: List[str] = Field(description="List of available outdoor measurement field names")
-    obs: List[WeatherObservation] = Field(description="Array of observation records")
+    outdoor_keys: list[str] = Field(description="List of available outdoor measurement field names")
+    obs: list[WeatherObservation] = Field(description="Array of observation records")
     station_id: int = Field(description="Unique identifier for the weather station")
     station_name: str = Field(description="Name of the weather station", examples=["Seattle"])
     public_name: str = Field(
