@@ -113,9 +113,7 @@ class Device(BaseModel):
 
     device_id: int = Field(description="Unique device identifier")
     device_type: DeviceType = Field(description="Type of device")
-    serial_number: str | None = Field(
-        None, description="Device serial number (None if inactive)"
-    )
+    serial_number: str | None = Field(None, description="Device serial number (None if inactive)")
     firmware_revision: str = Field(description="Current firmware version")
     hardware_revision: str = Field(description="Hardware revision number")
     device_meta: DeviceMeta = Field(description="Device-specific metadata")
@@ -253,9 +251,7 @@ class CurrentConditions(BaseModel):
     lightning_strike_last_distance: int | None = Field(
         None, description="Distance to last lightning strike"
     )
-    lightning_strike_count: int | None = Field(
-        None, description="Current lightning strike count"
-    )
+    lightning_strike_count: int | None = Field(None, description="Current lightning strike count")
     lightning_strike_count_last_1hr: int | None = Field(
         None, description="Lightning strikes in last hour"
     )

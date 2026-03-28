@@ -30,6 +30,7 @@ mcp-server-tempest = "mcp_server_tempest:main"
 
 [dependency-groups]
 dev = [
+    "prek>=0.3.8",
     "pytest>=8.0",
     "pytest-asyncio>=0.25",
     "pytest-cov>=7.1.0",

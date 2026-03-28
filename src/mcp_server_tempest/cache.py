@@ -32,8 +32,10 @@ class DiskCache:
     """JSON-file-based disk cache for Pydantic models, scoped per API token."""
 
     def __init__(self, token: str, ttl: int | None = None) -> None:
-        self.ttl = ttl if ttl is not None else int(
-            os.getenv("WEATHERFLOW_DISK_CACHE_TTL", DISK_CACHE_TTL_DEFAULT)
+        self.ttl = (
+            ttl
+            if ttl is not None
+            else int(os.getenv("WEATHERFLOW_DISK_CACHE_TTL", DISK_CACHE_TTL_DEFAULT))
         )
         self.cache_dir = Path(user_cache_dir("mcp-server-tempest")) / _token_hash(token)
         self.cache_dir.mkdir(parents=True, exist_ok=True)

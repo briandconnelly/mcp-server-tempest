@@ -62,6 +62,7 @@ from .rest import (
 
 logger = logging.getLogger(__name__)
 
+
 def _int_env(name: str, default: int) -> int:
     """Read an integer from an environment variable with a default."""
     value = os.getenv(name)

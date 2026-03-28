@@ -612,6 +612,4 @@ class TestDiskCacheIntegration:
         with patch.object(server_module, "_get_disk_cache", return_value=dc):
             result = await _get_station_id_data(12345, mock_ctx, use_cache=True)
             assert result.station_id == 12345
-            mock_ctx.info.assert_called_with(
-                "Using disk-cached station data for station 12345"
-            )
+            mock_ctx.info.assert_called_with("Using disk-cached station data for station 12345")
