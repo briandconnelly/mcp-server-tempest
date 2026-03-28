@@ -56,8 +56,8 @@ from .rest import (
 )
 
 cache = TTLCache(
-    maxsize=os.getenv("WEATHERFLOW_CACHE_SIZE", 100),
-    ttl=os.getenv("WEATHERFLOW_CACHE_TTL", 300),
+    maxsize=int(os.getenv("WEATHERFLOW_CACHE_SIZE", 100)),
+    ttl=int(os.getenv("WEATHERFLOW_CACHE_TTL", 300)),
 )
 
 # Create the MCP server
