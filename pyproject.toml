@@ -1,6 +1,6 @@
 [project]
 name = "mcp-server-tempest"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP Server for Retrieving Tempest Weather Data"
 readme = "README.md"
 license = { file = "LICENSE" }
