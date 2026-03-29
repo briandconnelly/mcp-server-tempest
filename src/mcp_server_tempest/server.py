@@ -96,7 +96,7 @@ def _get_disk_cache() -> DiskCache | None:
 
 @asynccontextmanager
 async def lifespan(server: FastMCP) -> AsyncIterator[None]:
-    """Validate configuration on startup."""
+    """Validate configuration on startup and pre-warm caches."""
     token = os.getenv("WEATHERFLOW_API_TOKEN")
     if not token:
         logger.warning(
@@ -104,6 +104,15 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
         )
     else:
         logger.info("WeatherFlow Tempest server starting")
+        dc = _get_disk_cache()
+        if dc:
+            hit = dc.get("stations", StationsResponse)
+            if hit is not None:
+                cache["stations"] = hit
+                logger.info(
+                    "Pre-warmed stations cache from disk (%d stations)",
+                    len(hit.stations),
+                )
     yield
 
 
@@ -152,6 +161,165 @@ def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
             f"You can get an API token from https://tempestwx.com/settings/tokens"
         )
     return token
+
+
+# ---------------------------------------------------------------------------
+# Output schemas and field exclusion sets.
+#
+# Tools return filtered dicts (via model_dump(exclude=...)) to reduce LLM
+# context, but we still want clients to see a typed outputSchema. We generate
+# schemas from the Pydantic models and then mark only the *actually excluded*
+# fields as non-required so that:
+#   - Clients know exactly which fields are guaranteed vs. optional
+#   - FastMCP's output validation passes for filtered responses
+#   - The schema accurately describes what the tool returns
+# ---------------------------------------------------------------------------
+
+
+def _relaxed_schema(
+    model_class: type,
+    optional_fields: dict[str, set[str]],
+) -> dict:
+    """Generate a JSON schema where only specified fields are made non-required.
+
+    Args:
+        model_class: The Pydantic model to generate the schema from.
+        optional_fields: Mapping of schema definition name (or "$root" for the
+            top-level object) to the set of field names that should be removed
+            from that definition's ``required`` list.
+    """
+    schema = model_class.model_json_schema(mode="serialization")
+
+    def _relax(obj: dict, name: str) -> None:
+        fields = optional_fields.get(name, set())
+        if fields and "required" in obj:
+            obj["required"] = [r for r in obj["required"] if r not in fields]
+
+    # Top-level
+    _relax(schema, "$root")
+
+    # $defs
+    for def_name, defn in schema.get("$defs", {}).items():
+        _relax(defn, def_name)
+
+    return schema
+
+
+_STATIONS_SCHEMA = _relaxed_schema(
+    StationsResponse,
+    {
+        "WeatherStation": {
+            "created_epoch",
+            "last_modified_epoch",
+        },
+        "StationMeta": {"share_with_wf", "share_with_wu"},
+        "StationItem": {"station_item_id", "location_id", "location_item_id"},
+        "StationCapability": {"device_id", "agl", "show_precip_final"},
+    },
+)
+
+_STATION_SCHEMA = _relaxed_schema(
+    StationResponse,
+    {
+        "$root": {"created_epoch", "last_modified_epoch"},
+        "StationMeta": {"share_with_wf", "share_with_wu"},
+        "StationItem": {"station_item_id", "location_id", "location_item_id"},
+        "StationCapability": {"device_id", "agl", "show_precip_final"},
+    },
+)
+
+_FORECAST_SCHEMA = _relaxed_schema(
+    ForecastResponse,
+    {
+        "$root": {"latitude", "longitude", "timezone_offset_minutes"},
+        "CurrentConditions": {"icon"},
+        "DailyForecast": {"icon", "precip_icon"},
+        "HourlyForecast": {"icon"},
+    },
+)
+
+_OBSERVATION_SCHEMA = _relaxed_schema(
+    ObservationResponse,
+    {
+        "$root": {"outdoor_keys", "latitude", "longitude", "elevation", "is_public"},
+        "WeatherObservation": {
+            "barometric_pressure",
+            "station_pressure",
+            "heat_index",
+            "wind_chill",
+            "wet_bulb_temperature",
+            "wet_bulb_globe_temperature",
+            "delta_t",
+            "air_density",
+            "brightness",
+            "precip_accum_local_day_final",
+            "precip_accum_local_yesterday_final",
+            "precip_analysis_type_yesterday",
+            "precip_minutes_local_day",
+            "precip_minutes_local_yesterday",
+            "precip_minutes_local_yesterday_final",
+        },
+    },
+)
+
+_STATIONS_EXCLUDE: dict = {
+    "stations": {
+        "__all__": {
+            "created_epoch": True,
+            "last_modified_epoch": True,
+            "station_meta": {"share_with_wf", "share_with_wu"},
+            "station_items": {
+                "__all__": {"station_item_id", "location_id", "location_item_id"},
+            },
+            "capabilities": {
+                "__all__": {"device_id", "agl", "show_precip_final"},
+            },
+        },
+    },
+}
+
+_STATION_EXCLUDE: dict = {
+    "created_epoch": True,
+    "last_modified_epoch": True,
+    "station_meta": {"share_with_wf", "share_with_wu"},
+    "station_items": {
+        "__all__": {"station_item_id", "location_id", "location_item_id"},
+    },
+    "capabilities": {
+        "__all__": {"device_id", "agl", "show_precip_final"},
+    },
+}
+
+_FORECAST_EXCLUDE: dict = {
+    "current_conditions": {"icon"},
+    "forecast": {
+        "daily": {"__all__": {"icon", "precip_icon"}},
+        "hourly": {"__all__": {"icon"}},
+    },
+}
+
+_OBSERVATION_EXCLUDE: dict = {
+    "outdoor_keys": True,
+}
+
+# Fields to drop from each observation in summary mode.
+_OBSERVATION_SUMMARY_FIELDS: set[str] = {
+    "barometric_pressure",
+    "station_pressure",
+    "heat_index",
+    "wind_chill",
+    "wet_bulb_temperature",
+    "wet_bulb_globe_temperature",
+    "delta_t",
+    "air_density",
+    "brightness",
+    "precip_accum_local_day_final",
+    "precip_accum_local_yesterday_final",
+    "precip_analysis_type_yesterday",
+    "precip_minutes_local_day",
+    "precip_minutes_local_yesterday",
+    "precip_minutes_local_yesterday_final",
+}
 
 
 async def _get_stations_data(ctx: Context, use_cache: bool = True) -> StationsResponse:
@@ -256,6 +424,7 @@ async def _get_observation_data(
         "openWorldHint": True,
         "idempotentHint": True,
     },
+    output_schema=_STATIONS_SCHEMA,
 )
 async def get_stations(
     use_cache: Annotated[
@@ -264,62 +433,23 @@ async def get_stations(
             default=True,
             description="Whether to use cached results (default: True)",
         ),
-    ],
+    ] = True,
     ctx: Context = None,
-) -> StationsResponse:
+) -> dict:
     """Get a list of all weather stations accessible with your API token.
 
-    This is typically the first function you should call to discover what weather
-    stations are available to you. Each station contains one or more devices that
-    collect different types of weather data.
+    This is typically the first tool to call to discover available stations.
+    Each station contains one or more devices that collect weather data.
+    Station IDs from this response are used in get_observation(),
+    get_forecast(), and get_station_id().
 
-    The response includes comprehensive information about each station:
-    - Station metadata (name, location, timezone, elevation)
-    - Connected devices and their capabilities
-    - Device status and last communication times
-    - Station configuration and settings
-
-    **Device Types:**
-    - **Tempest**: All-in-one weather sensor (wind, rain, temperature, etc.)
-    - **Air**: Temperature, humidity, pressure, lightning detection
-    - **Sky**: Wind, rain, solar radiation, UV index
-    - **Hub**: Communication hub for other devices
-
-    **Active vs Inactive Devices:**
-    Devices with a `serial_number` are active and collecting data.
-    Devices without a `serial_number` are no longer active or have been removed.
-
-    Args:
-        use_cache: Whether to use cached station data. Since station configurations
-                  rarely change, caching improves performance and reduces API calls.
-                  Cache expires after 5 minutes.
-
-    Returns:
-        StationsResponse containing:
-        - List of stations with metadata and device information
-        - API status and response metadata
-        - Station-specific settings like units and location data
-
-    Raises:
-        ToolError: If API token is invalid, network request fails, or you have
-                  no accessible stations
-
-    Example Usage:
-        >>> stations = await get_stations()
-        >>> for station in stations.stations:
-        >>>     print(f"Station: {station.name} (ID: {station.station_id})")
-        >>>     print(f"Location: {station.latitude}, {station.longitude}")
-        >>>     for device in station.devices:
-        >>>         if device.serial_number:  # Active device
-        >>>             print(f"  Device: {device.device_type}")
-
-    Note:
-        Station IDs returned by this function are used in other tools like
-        get_observation(), get_forecast(), and get_station_id().
+    Low-value fields (icons, internal IDs, share flags) are excluded to
+    reduce response size.
     """
 
     try:
-        return await _get_stations_data(ctx, use_cache)
+        data = await _get_stations_data(ctx, use_cache)
+        return data.model_dump(exclude=_STATIONS_EXCLUDE)
     except ToolError:
         raise
     except Exception as e:
@@ -334,6 +464,7 @@ async def get_stations(
         "openWorldHint": True,
         "idempotentHint": True,
     },
+    output_schema=_STATION_SCHEMA,
 )
 async def get_station_id(
     station_id: Annotated[int, Field(description="The station ID to get information for", gt=0)],
@@ -343,73 +474,20 @@ async def get_station_id(
             default=True,
             description="Whether to use cached results (default: True)",
         ),
-    ],
+    ] = True,
     ctx: Context = None,
-) -> StationResponse:
-    """Get comprehensive details and configuration for a specific weather station.
+) -> dict:
+    """Get details and configuration for a specific weather station.
 
-    This function provides in-depth information about a single weather station,
-    including all connected devices, detailed configuration settings, and
-    operational status. Use this when you need complete station metadata
-    beyond what get_stations() provides.
+    Returns station metadata, connected devices, and configuration.
+    Use get_stations() first to discover available station IDs.
 
-    **Station Information Includes:**
-    - Complete station metadata (name, location, elevation, timezone)
-    - Detailed device inventory with specifications and status
-    - Station configuration and measurement units
-    - Device communication history and health status
-    - Public/private settings and sharing permissions
-
-    **Device Details Include:**
-    - Device type, model, and firmware version
-    - Serial numbers and hardware revisions
-    - Last communication timestamps
-    - Device-specific settings and capabilities
-    - Calibration and sensor health information
-
-    **Operational Status:**
-    - Online/offline status for each device
-    - Battery levels (for battery-powered devices)
-    - Signal strength and communication quality
-    - Data collection intervals and settings
-
-    Args:
-        station_id: The numeric identifier of the station. Get this from
-                   get_stations() or from your WeatherFlow account dashboard.
-        use_cache: Whether to use cached station data. Station configurations
-                  change infrequently, so caching improves performance.
-                  Cache expires after 5 minutes.
-
-    Returns:
-        StationResponse containing:
-        - Complete station metadata and settings
-        - Detailed device inventory and status
-        - Configuration parameters and unit settings
-        - API response metadata
-
-    Raises:
-        ToolError: If the station ID doesn't exist, you don't have access to it,
-                  API token is invalid, or network request fails
-
-    Example Usage:
-        >>> station = await get_station_id(12345)
-        >>> print(f"Station: {station.name}")
-        >>> print(f"Location: {station.latitude}°, {station.longitude}°")
-        >>> print(f"Elevation: {station.station_meta.elevation}m")
-        >>> print(f"Units: {station.station_units}")
-        >>>
-        >>> # Check device status
-        >>> for device in station.devices:
-        >>>     if device.serial_number:
-        >>>         status = "Online" if device.device_meta else "Offline"
-        >>>         print(f"  {device.device_type}: {status}")
-
-    Note:
-        Use get_stations() first to discover available station IDs. This function
-        provides more detailed information than the station list overview.
+    Low-value fields (icons, internal IDs, share flags) are excluded to
+    reduce response size.
     """
     try:
-        return await _get_station_id_data(station_id, ctx, use_cache)
+        data = await _get_station_id_data(station_id, ctx, use_cache)
+        return data.model_dump(exclude=_STATION_EXCLUDE)
     except ToolError:
         raise
     except Exception as e:
@@ -424,93 +502,74 @@ async def get_station_id(
         "openWorldHint": True,
         "idempotentHint": True,
     },
+    output_schema=_FORECAST_SCHEMA,
 )
 async def get_forecast(
     station_id: Annotated[
         int, Field(description="The ID of the station to get forecast for", gt=0)
     ],
+    hours: Annotated[
+        int,
+        Field(
+            default=12,
+            description=(
+                "Number of hourly forecasts to return (default: 12, max ~48)."
+                " Capped at 6 in summary mode."
+            ),
+            ge=1,
+            le=48,
+        ),
+    ] = 12,
+    days: Annotated[
+        int,
+        Field(
+            default=5,
+            description=(
+                "Number of daily forecasts to return (default: 5, max ~10)."
+                " Capped at 2 in summary mode."
+            ),
+            ge=1,
+            le=10,
+        ),
+    ] = 5,
+    detailed: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="If true, return full response. Default returns a condensed summary.",
+        ),
+    ] = False,
     use_cache: Annotated[
         bool,
         Field(
             default=True,
             description="Whether to use cached results (default: True)",
         ),
-    ],
+    ] = True,
     ctx: Context = None,
-) -> ForecastResponse:
-    """Get weather forecast and current conditions for a specific weather station.
+) -> dict:
+    """Get weather forecast and current conditions for a station.
 
-    This function retrieves comprehensive weather forecast data including current
-    conditions, hourly forecasts, and daily summaries. The forecast combines
-    data from your personal weather station with professional weather models
-    to provide hyper-local predictions.
+    Returns current conditions, hourly forecasts, and daily summaries.
+    By default returns a condensed summary (2 daily, up to 6 hourly).
+    Set detailed=True for the full response with configurable depth.
 
-    **Current Conditions Include:**
-    - Real-time temperature, humidity, and pressure
-    - Wind speed, direction, and gusts
-    - Precipitation rate and accumulation
-    - Solar radiation and UV index
-    - Visibility and weather conditions
-    - "Feels like" temperature and comfort indices
-
-    **Forecast Data Includes:**
-    - Hourly forecasts for the next 24-48 hours
-    - Daily forecasts for the next 7-10 days
-    - Temperature highs and lows
-    - Precipitation probability and amounts
-    - Wind forecasts and weather condition summaries
-    - Sunrise/sunset times and moon phases
-
-    **Data Sources:**
-    The forecast combines your station's real-time observations with
-    professional meteorological models to provide accurate local predictions
-    that account for your specific microclimate and terrain.
-
-    Args:
-        station_id: The numeric identifier of the weather station. Get this from
-                   get_stations() or your WeatherFlow account dashboard.
-        use_cache: Whether to use cached forecast data. Forecasts update
-                  frequently, but caching for a few minutes improves performance
-                  for repeated requests. Cache expires after 5 minutes.
-
-    Returns:
-        ForecastResponse containing:
-        - Current weather conditions and observations
-        - Hourly forecast data for the next 24-48 hours
-        - Daily forecast summaries for the next week
-        - Station location and unit information
-        - Forecast generation timestamp and metadata
-
-    Raises:
-        ToolError: If the station ID doesn't exist, you don't have access to it,
-                  API token is invalid, or network request fails
-
-    Example Usage:
-        >>> forecast = await get_forecast(12345)
-        >>>
-        >>> # Current conditions
-        >>> current = forecast.current_conditions
-        >>> print(f"Current: {current.air_temperature}° {forecast.units.units_temp}")
-        >>> print(f"Conditions: {current.conditions}")
-        >>> print(f"Wind: {current.wind_avg} {forecast.units.units_wind}")
-        >>>
-        >>> # Today's forecast
-        >>> today = forecast.forecast.daily[0]
-        >>> print(f"High/Low: {today.air_temp_high}°/{today.air_temp_low}°")
-        >>> print(f"Rain chance: {today.precip_probability}%")
-        >>>
-        >>> # Next few hours
-        >>> for hour in forecast.forecast.hourly[:6]:
-        >>>     time = datetime.fromtimestamp(hour.time)
-        >>>     print(f"{time.strftime('%H:%M')}: {hour.air_temperature}°")
-
-    Note:
-        All measurements are returned in the units configured for your station.
-        Check the 'units' field in the response to understand the unit system
-        (e.g., Celsius vs Fahrenheit, m/s vs mph for wind speed).
+    All measurements use the units configured for the station (see 'units' field).
     """
     try:
-        return await _get_forecast_data(station_id, ctx, use_cache)
+        data = await _get_forecast_data(station_id, ctx, use_cache)
+        result = data.model_dump(exclude=_FORECAST_EXCLUDE)
+
+        if detailed:
+            result["forecast"]["hourly"] = result["forecast"]["hourly"][:hours]
+            result["forecast"]["daily"] = result["forecast"]["daily"][:days]
+        else:
+            result["forecast"]["hourly"] = result["forecast"]["hourly"][: min(hours, 6)]
+            result["forecast"]["daily"] = result["forecast"]["daily"][: min(days, 2)]
+            for key in ("latitude", "longitude", "timezone_offset_minutes"):
+                result.pop(key, None)
+
+        return result
     except ToolError:
         raise
     except Exception as e:
@@ -525,50 +584,49 @@ async def get_forecast(
         "openWorldHint": True,
         "idempotentHint": True,
     },
+    output_schema=_OBSERVATION_SCHEMA,
 )
 async def get_observation(
     station_id: Annotated[
         int, Field(description="The ID of the station to get observations for", gt=0)
     ],
+    detailed: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="If true, return full response. Default returns a condensed summary.",
+        ),
+    ] = False,
     use_cache: Annotated[
         bool,
         Field(
             default=True,
             description="Whether to use cached results (default: True)",
         ),
-    ],
+    ] = True,
     ctx: Context = None,
-) -> ObservationResponse:
+) -> dict:
     """Get the most recent weather observations from a station.
 
-    This function retrieves detailed current weather conditions including:
-    - Temperature, humidity, pressure
-    - Wind speed and direction
-    - Precipitation data
-    - Solar radiation and UV index
-    - Lightning detection data (if available)
+    Returns current conditions including temperature, humidity, pressure,
+    wind, precipitation, solar radiation, UV, and lightning data.
+    By default returns a condensed summary. Set detailed=True for all fields.
 
-    The data is returned in the units configured for the station. Check the
-    'station_units' field in the response to understand the unit system.
-
-    Args:
-        station_id: The numeric ID of the weather station
-        use_cache: Whether to use cached data (recommended for frequent requests)
-
-    Returns:
-        ObservationResponse containing current weather conditions and metadata
-
-    Raises:
-        ToolError: If the station is not accessible or API request fails
-
-    Example:
-        >>> obs = await get_observation(station_id=12345)
-        >>> temp = obs.obs[0]["air_temperature"]  # Current temperature
-        >>> units = obs.station_units["units_temp"]  # 'c' or 'f'
+    All measurements use the units configured for the station (see 'station_units').
     """
 
     try:
-        return await _get_observation_data(station_id, ctx, use_cache)
+        data = await _get_observation_data(station_id, ctx, use_cache)
+        result = data.model_dump(exclude=_OBSERVATION_EXCLUDE)
+
+        if not detailed:
+            for obs in result["obs"]:
+                for field in _OBSERVATION_SUMMARY_FIELDS:
+                    obs.pop(field, None)
+            for key in ("latitude", "longitude", "elevation", "is_public"):
+                result.pop(key, None)
+
+        return result
     except ToolError:
         raise
     except Exception as e:

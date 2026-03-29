@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-03-28
+
+### Added
+
+- Station cache pre-warming: on startup, the server loads station data from
+  disk cache into the in-memory TTL cache, eliminating cold-start latency for
+  the first tool call.
+- `detailed` parameter on `get_forecast` and `get_observation` tools
+  (default: `false`). Summary mode returns condensed responses to reduce LLM
+  context usage; detailed mode returns the full response.
+- `hours` and `days` parameters on `get_forecast` to control forecast depth
+  (defaults: 12 hourly, 5 daily). In summary mode, these are capped at 6 and
+  2 respectively.
+- Typed `output_schema` on all tools via `_relaxed_schema()`, which generates
+  JSON schemas from Pydantic models with only excluded fields marked optional.
+  Clients see full field names, types, and descriptions while filtered
+  responses pass FastMCP output validation.
+
+### Changed
+
+- Tools now return filtered dicts (via `model_dump(exclude=...)`) instead of
+  full Pydantic model instances. Low-value fields are excluded to reduce
+  response size:
+  - **All tools**: icon identifiers (`icon`, `precip_icon`)
+  - **Station tools**: internal IDs (`station_item_id`, `location_id`,
+    `location_item_id`), share flags (`share_with_wf`, `share_with_wu`),
+    capability metadata (`device_id`, `agl`, `show_precip_final`), timestamps
+    (`created_epoch`, `last_modified_epoch`)
+  - **Observation tools**: `outdoor_keys` always excluded; summary mode also
+    drops derived fields (`heat_index`, `wind_chill`, `wet_bulb_temperature`,
+    `delta_t`, `air_density`, `brightness`, and others)
+  - **Forecast tools**: summary mode drops `latitude`, `longitude`,
+    `timezone_offset_minutes`
+- Resource functions remain unchanged (return full Pydantic models).
+- Tool docstrings shortened for conciseness.
+- `use_cache` parameter now has a Python-level default value on all tools.
+
 ## [0.3.0] - 2026-03-28
 
 ### Added

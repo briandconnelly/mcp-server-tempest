@@ -8,7 +8,13 @@ from fastmcp.exceptions import ToolError
 
 import mcp_server_tempest.server as server_module
 from mcp_server_tempest.cache import DiskCache
+from mcp_server_tempest.models import WeatherObservation
 from mcp_server_tempest.server import (
+    _FORECAST_SCHEMA,
+    _OBSERVATION_SCHEMA,
+    _OBSERVATION_SUMMARY_FIELDS,
+    _STATION_SCHEMA,
+    _STATIONS_SCHEMA,
     _get_api_token,
     _get_disk_cache,
     _get_forecast_data,
@@ -16,6 +22,7 @@ from mcp_server_tempest.server import (
     _get_station_id_data,
     _get_stations_data,
     _int_env,
+    _relaxed_schema,
     cache,
     clear_cache,
     get_forecast,
@@ -97,8 +104,93 @@ SAMPLE_CURRENT_CONDITIONS = {
     "time": 1700000000,
 }
 
+
+def _make_daily_forecast(day_num: int = 1) -> dict:
+    return {
+        "air_temp_high": 80.0,
+        "air_temp_low": 60.0,
+        "day_num": day_num,
+        "day_start_local": 1700000000 + (day_num - 1) * 86400,
+        "month_num": 11,
+        "icon": "clear-day",
+        "conditions": "Clear",
+        "precip_probability": 10,
+        "precip_type": "rain",
+        "precip_icon": "chance-rain",
+        "sunrise": 1700000000,
+        "sunset": 1700040000,
+    }
+
+
+def _make_hourly_forecast(hour: int = 0) -> dict:
+    return {
+        "air_temperature": 72.0,
+        "local_day": 1 + hour // 24,
+        "local_hour": hour % 24,
+        "time": 1700000000 + hour * 3600,
+        "precip": 0.0,
+        "precip_probability": 5,
+        "precip_type": None,
+        "relative_humidity": 50,
+        "sea_level_pressure": 30.1,
+        "wind_avg": 5.0,
+        "wind_direction": 180.0,
+        "wind_direction_cardinal": "S",
+        "wind_gust": 10.0,
+        "conditions": "Clear",
+        "icon": "clear-day",
+        "feels_like": 72.0,
+        "uv": 3.0,
+    }
+
+
+def _make_observation() -> dict:
+    return {
+        "timestamp": 1700000000,
+        "air_temperature": 72.0,
+        "barometric_pressure": 30.1,
+        "station_pressure": 29.9,
+        "pressure_trend": "steady",
+        "sea_level_pressure": 30.1,
+        "relative_humidity": 50,
+        "precip": 0.0,
+        "precip_accum_last_1hr": 0.0,
+        "precip_accum_local_day": 0.0,
+        "precip_accum_local_day_final": 0.0,
+        "precip_accum_local_yesterday": 0.0,
+        "precip_accum_local_yesterday_final": 0.0,
+        "precip_analysis_type_yesterday": 0,
+        "precip_minutes_local_day": 0,
+        "precip_minutes_local_yesterday": 0,
+        "precip_minutes_local_yesterday_final": 0,
+        "wind_avg": 5.0,
+        "wind_direction": 180,
+        "wind_gust": 10.0,
+        "wind_lull": 2.0,
+        "solar_radiation": 500.0,
+        "uv": 3.0,
+        "brightness": 50000.0,
+        "lightning_strike_last_epoch": None,
+        "lightning_strike_last_distance": None,
+        "lightning_strike_count": 0,
+        "lightning_strike_count_last_1hr": 0,
+        "lightning_strike_count_last_3hr": 0,
+        "feels_like": 72.0,
+        "heat_index": 72.0,
+        "wind_chill": 72.0,
+        "dew_point": 52.0,
+        "wet_bulb_temperature": 60.0,
+        "wet_bulb_globe_temperature": 65.0,
+        "delta_t": 20.0,
+        "air_density": 1.2,
+    }
+
+
 SAMPLE_FORECAST_DATA = {
-    "forecast": {"daily": [], "hourly": []},
+    "forecast": {
+        "daily": [_make_daily_forecast(d) for d in range(1, 11)],
+        "hourly": [_make_hourly_forecast(h) for h in range(48)],
+    },
     "current_conditions": SAMPLE_CURRENT_CONDITIONS,
     "location_name": "Seattle",
     "latitude": 47.6,
@@ -110,7 +202,7 @@ SAMPLE_FORECAST_DATA = {
 
 SAMPLE_OBSERVATION_DATA = {
     "outdoor_keys": ["air_temperature"],
-    "obs": [],
+    "obs": [_make_observation()],
     "station_id": 12345,
     "station_name": "Home",
     "public_name": "My Station",
@@ -315,7 +407,7 @@ class TestTools:
             return_value=SAMPLE_STATION_DATA,
         ):
             result = await get_stations(use_cache=False, ctx=mock_ctx)
-            assert len(result.stations) == 1
+            assert len(result["stations"]) == 1
 
     async def test_get_stations_error(self, mock_ctx):
         with (
@@ -333,7 +425,7 @@ class TestTools:
             return_value=SAMPLE_SINGLE_STATION_DATA,
         ):
             result = await get_station_id(station_id=12345, use_cache=False, ctx=mock_ctx)
-            assert result.station_id == 12345
+            assert result["station_id"] == 12345
 
     async def test_get_station_id_error(self, mock_ctx):
         with (
@@ -351,7 +443,7 @@ class TestTools:
             return_value=SAMPLE_FORECAST_DATA,
         ):
             result = await get_forecast(station_id=12345, use_cache=False, ctx=mock_ctx)
-            assert result.location_name == "Seattle"
+            assert result["location_name"] == "Seattle"
 
     async def test_get_forecast_error(self, mock_ctx):
         with (
@@ -369,7 +461,7 @@ class TestTools:
             return_value=SAMPLE_OBSERVATION_DATA,
         ):
             result = await get_observation(station_id=12345, use_cache=False, ctx=mock_ctx)
-            assert result.station_id == 12345
+            assert result["station_id"] == 12345
 
     async def test_get_observation_error(self, mock_ctx):
         with (
@@ -473,6 +565,423 @@ class TestLifespan:
         with patch.dict(os.environ, {}, clear=True):
             async with lifespan(mcp):
                 pass  # Should warn but not raise
+
+    async def test_lifespan_prewarms_cache_from_disk(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "mcp_server_tempest.cache.user_cache_dir",
+            lambda app_name: str(tmp_path),
+        )
+        from mcp_server_tempest.models import StationsResponse
+
+        dc = DiskCache(token="test-token", ttl=3600)
+        stations_data = StationsResponse(**SAMPLE_STATION_DATA)
+        dc.set("stations", stations_data)
+
+        with (
+            patch.dict(os.environ, {"WEATHERFLOW_API_TOKEN": "test-token"}),
+            patch.object(server_module, "_get_disk_cache", return_value=dc),
+        ):
+            async with lifespan(mcp):
+                assert "stations" in cache
+                assert cache["stations"].stations[0].station_id == 12345
+
+    async def test_lifespan_no_disk_cache_hit(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "mcp_server_tempest.cache.user_cache_dir",
+            lambda app_name: str(tmp_path),
+        )
+        dc = DiskCache(token="test-token", ttl=3600)
+
+        with (
+            patch.dict(os.environ, {"WEATHERFLOW_API_TOKEN": "test-token"}),
+            patch.object(server_module, "_get_disk_cache", return_value=dc),
+        ):
+            async with lifespan(mcp):
+                assert "stations" not in cache
+
+
+# -- Tests for field exclusion --
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestFieldExclusion:
+    async def test_stations_excludes_low_value_fields(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_stations",
+            return_value=SAMPLE_STATION_DATA,
+        ):
+            result = await get_stations(use_cache=False, ctx=mock_ctx)
+            station = result["stations"][0]
+            assert "created_epoch" not in station
+            assert "last_modified_epoch" not in station
+            assert "share_with_wf" not in station["station_meta"]
+            assert "share_with_wu" not in station["station_meta"]
+            # elevation should still be there
+            assert "elevation" in station["station_meta"]
+
+    async def test_station_id_excludes_low_value_fields(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_station_id",
+            return_value=SAMPLE_SINGLE_STATION_DATA,
+        ):
+            result = await get_station_id(station_id=12345, use_cache=False, ctx=mock_ctx)
+            assert "created_epoch" not in result
+            assert "last_modified_epoch" not in result
+
+    async def test_forecast_excludes_icons(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(
+                station_id=12345, detailed=True, use_cache=False, ctx=mock_ctx
+            )
+            assert "icon" not in result["current_conditions"]
+            for daily in result["forecast"]["daily"]:
+                assert "icon" not in daily
+                assert "precip_icon" not in daily
+            for hourly in result["forecast"]["hourly"]:
+                assert "icon" not in hourly
+
+    async def test_observation_excludes_outdoor_keys(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = await get_observation(
+                station_id=12345, detailed=True, use_cache=False, ctx=mock_ctx
+            )
+            assert "outdoor_keys" not in result
+
+    def test_observation_summary_fields_match_model(self):
+        """Ensure every field in _OBSERVATION_SUMMARY_FIELDS exists on WeatherObservation."""
+        model_fields = set(WeatherObservation.model_fields)
+        unknown = _OBSERVATION_SUMMARY_FIELDS - model_fields
+        assert not unknown, (
+            f"Fields in _OBSERVATION_SUMMARY_FIELDS not on WeatherObservation: {unknown}"
+        )
+
+
+# -- Tests for forecast depth --
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestForecastDepth:
+    async def test_default_summary_limits(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(station_id=12345, use_cache=False, ctx=mock_ctx)
+            # Summary mode defaults: min(12, 6)=6 hourly, min(5, 2)=2 daily
+            assert len(result["forecast"]["hourly"]) == 6
+            assert len(result["forecast"]["daily"]) == 2
+
+    async def test_summary_drops_metadata(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(station_id=12345, use_cache=False, ctx=mock_ctx)
+            assert "latitude" not in result
+            assert "longitude" not in result
+            assert "timezone_offset_minutes" not in result
+            # These should remain
+            assert "location_name" in result
+            assert "timezone" in result
+            assert "units" in result
+
+    async def test_detailed_custom_depth(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(
+                station_id=12345, hours=6, days=3, detailed=True, use_cache=False, ctx=mock_ctx
+            )
+            assert len(result["forecast"]["hourly"]) == 6
+            assert len(result["forecast"]["daily"]) == 3
+            # Detailed keeps metadata
+            assert "latitude" in result
+            assert "longitude" in result
+
+    async def test_detailed_default_depth(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(
+                station_id=12345, detailed=True, use_cache=False, ctx=mock_ctx
+            )
+            # Detailed defaults: 12 hourly, 5 daily
+            assert len(result["forecast"]["hourly"]) == 12
+            assert len(result["forecast"]["daily"]) == 5
+
+    async def test_depth_exceeds_available(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(
+                station_id=12345, hours=48, days=10, detailed=True, use_cache=False, ctx=mock_ctx
+            )
+            assert len(result["forecast"]["hourly"]) == 48
+            assert len(result["forecast"]["daily"]) == 10
+
+    async def test_summary_respects_small_hours(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(station_id=12345, hours=3, use_cache=False, ctx=mock_ctx)
+            # Summary mode: min(3, 6) = 3
+            assert len(result["forecast"]["hourly"]) == 3
+
+    async def test_boundary_hours_1_days_1(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(
+                station_id=12345, hours=1, days=1, detailed=True, use_cache=False, ctx=mock_ctx
+            )
+            assert len(result["forecast"]["hourly"]) == 1
+            assert len(result["forecast"]["daily"]) == 1
+
+
+# -- Tests for empty data edge cases --
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestEmptyData:
+    async def test_forecast_empty_daily_and_hourly(self, mock_ctx):
+        empty_forecast = {
+            **SAMPLE_FORECAST_DATA,
+            "forecast": {"daily": [], "hourly": []},
+        }
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=empty_forecast,
+        ):
+            result = await get_forecast(station_id=12345, use_cache=False, ctx=mock_ctx)
+            assert result["forecast"]["daily"] == []
+            assert result["forecast"]["hourly"] == []
+
+    async def test_forecast_empty_detailed(self, mock_ctx):
+        empty_forecast = {
+            **SAMPLE_FORECAST_DATA,
+            "forecast": {"daily": [], "hourly": []},
+        }
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=empty_forecast,
+        ):
+            result = await get_forecast(
+                station_id=12345, detailed=True, use_cache=False, ctx=mock_ctx
+            )
+            assert result["forecast"]["daily"] == []
+            assert result["forecast"]["hourly"] == []
+
+    async def test_observation_empty_obs(self, mock_ctx):
+        empty_obs = {**SAMPLE_OBSERVATION_DATA, "obs": []}
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=empty_obs,
+        ):
+            result = await get_observation(station_id=12345, use_cache=False, ctx=mock_ctx)
+            assert result["obs"] == []
+
+    async def test_observation_empty_obs_detailed(self, mock_ctx):
+        empty_obs = {**SAMPLE_OBSERVATION_DATA, "obs": []}
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=empty_obs,
+        ):
+            result = await get_observation(
+                station_id=12345, detailed=True, use_cache=False, ctx=mock_ctx
+            )
+            assert result["obs"] == []
+
+
+# -- Tests for summary mode caps --
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestSummaryModeCaps:
+    async def test_summary_caps_hours_at_6(self, mock_ctx):
+        """Passing hours=10 in summary mode should still cap at 6."""
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(station_id=12345, hours=10, use_cache=False, ctx=mock_ctx)
+            assert len(result["forecast"]["hourly"]) == 6
+
+    async def test_summary_caps_days_at_2(self, mock_ctx):
+        """Passing days=8 in summary mode should still cap at 2."""
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(station_id=12345, days=8, use_cache=False, ctx=mock_ctx)
+            assert len(result["forecast"]["daily"]) == 2
+
+
+# -- Tests for _relaxed_schema --
+
+
+class TestRelaxedSchema:
+    def test_removes_specified_fields_from_required(self):
+        from mcp_server_tempest.models import ForecastResponse
+
+        schema = _relaxed_schema(
+            ForecastResponse,
+            {"$root": {"latitude"}, "CurrentConditions": {"icon"}},
+        )
+        assert "latitude" not in schema.get("required", [])
+        # Other root fields should still be required
+        assert "forecast" in schema["required"]
+        assert "current_conditions" in schema["required"]
+
+        cc = schema["$defs"]["CurrentConditions"]
+        assert "icon" not in cc.get("required", [])
+        assert "air_temperature" in cc["required"]
+
+    def test_unmentioned_definitions_unchanged(self):
+        from mcp_server_tempest.models import ForecastResponse
+
+        original = ForecastResponse.model_json_schema(mode="serialization")
+        relaxed = _relaxed_schema(ForecastResponse, {"$root": {"latitude"}})
+
+        # HourlyForecast was not mentioned, should be identical
+        assert (
+            original["$defs"]["HourlyForecast"]["required"]
+            == relaxed["$defs"]["HourlyForecast"]["required"]
+        )
+
+    def test_empty_optional_fields_returns_original(self):
+        from mcp_server_tempest.models import ForecastResponse
+
+        original = ForecastResponse.model_json_schema(mode="serialization")
+        relaxed = _relaxed_schema(ForecastResponse, {})
+        assert original["required"] == relaxed["required"]
+
+    def test_server_schemas_have_no_extra_required_removals(self):
+        """Verify server schemas only relax fields that are actually excluded."""
+        # Forecast: icon fields should be optional, core fields required
+        fc = _FORECAST_SCHEMA["$defs"]["CurrentConditions"]
+        assert "icon" not in fc.get("required", [])
+        assert "air_temperature" in fc["required"]
+        assert "conditions" in fc["required"]
+
+        # Observation: derived fields optional, core fields required
+        obs = _OBSERVATION_SCHEMA["$defs"]["WeatherObservation"]
+        assert "heat_index" not in obs.get("required", [])
+        assert "air_temperature" in obs["required"]
+        assert "feels_like" in obs["required"]
+
+        # Stations: internal IDs optional, core fields required
+        st = _STATIONS_SCHEMA["$defs"]["WeatherStation"]
+        assert "created_epoch" not in st.get("required", [])
+        assert "station_id" in st["required"]
+        assert "name" in st["required"]
+
+        # Station: same for single station root
+        assert "created_epoch" not in _STATION_SCHEMA.get("required", [])
+        assert "station_id" in _STATION_SCHEMA["required"]
+
+
+# -- Tests for use_cache default --
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestUseCacheDefault:
+    async def test_get_stations_default_use_cache(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_stations",
+            return_value=SAMPLE_STATION_DATA,
+        ):
+            result = await get_stations(ctx=mock_ctx)
+            assert len(result["stations"]) == 1
+
+    async def test_get_station_id_default_use_cache(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_station_id",
+            return_value=SAMPLE_SINGLE_STATION_DATA,
+        ):
+            result = await get_station_id(station_id=12345, ctx=mock_ctx)
+            assert result["station_id"] == 12345
+
+
+# -- Tests for observation summary/detailed --
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestObservationSummaryDetailed:
+    async def test_summary_drops_derived_fields(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = await get_observation(station_id=12345, use_cache=False, ctx=mock_ctx)
+            obs = result["obs"][0]
+            for field in (
+                "heat_index",
+                "wind_chill",
+                "wet_bulb_temperature",
+                "wet_bulb_globe_temperature",
+                "delta_t",
+                "air_density",
+                "brightness",
+                "barometric_pressure",
+                "station_pressure",
+                "precip_accum_local_day_final",
+                "precip_accum_local_yesterday_final",
+                "precip_analysis_type_yesterday",
+                "precip_minutes_local_day",
+                "precip_minutes_local_yesterday",
+                "precip_minutes_local_yesterday_final",
+            ):
+                assert field not in obs, f"{field} should be excluded in summary mode"
+            # Core fields should remain
+            assert "air_temperature" in obs
+            assert "wind_avg" in obs
+            assert "feels_like" in obs
+
+    async def test_summary_drops_metadata(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = await get_observation(station_id=12345, use_cache=False, ctx=mock_ctx)
+            assert "latitude" not in result
+            assert "longitude" not in result
+            assert "elevation" not in result
+            assert "is_public" not in result
+            assert "outdoor_keys" not in result
+            # These should remain
+            assert "station_id" in result
+            assert "station_name" in result
+            assert "timezone" in result
+
+    async def test_detailed_keeps_all_fields(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = await get_observation(
+                station_id=12345, detailed=True, use_cache=False, ctx=mock_ctx
+            )
+            obs = result["obs"][0]
+            assert "heat_index" in obs
+            assert "wind_chill" in obs
+            assert "delta_t" in obs
+            assert "air_density" in obs
+            # detailed still drops outdoor_keys
+            assert "outdoor_keys" not in result
+            # detailed keeps location metadata
+            assert "latitude" in result
+            assert "longitude" in result
 
 
 # -- Tests for health check --
