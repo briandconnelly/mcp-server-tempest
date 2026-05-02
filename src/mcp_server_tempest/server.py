@@ -1,9 +1,9 @@
 """
 WeatherFlow Tempest MCP Server
 
-This module provides a Model Context Protocol (MCP) server for accessing WeatherFlow Tempest
-weather station data. It offers both tools (for interactive queries) and resources
-(for data access) to retrieve real-time weather observations, forecasts, and station metadata.
+This module provides a Model Context Protocol (MCP) server for accessing
+WeatherFlow Tempest weather station data. It exposes tools for retrieving
+real-time weather observations, forecasts, and station metadata.
 
 Features:
 - Real-time weather observations from personal weather stations
@@ -29,8 +29,8 @@ Example Usage:
     # Get current conditions for a specific station
     conditions = await client.call_tool("get_observation", {"station_id": 12345})
 
-    # Access via resources
-    forecast = await client.read_resource("weather://tempest/forecast/12345")
+    # Get the forecast
+    forecast = await client.call_tool("get_forecast", {"station_id": 12345})
 """
 
 import logging
@@ -120,34 +120,50 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
 mcp = FastMCP(
     name="WeatherFlow Tempest API Server",
     instructions="""\
-    WeatherFlow Tempest weather station data server.
+WeatherFlow Tempest — read-only access to a user's personal Tempest weather
+station(s). Not a global weather service.
 
-    Quick Start:
-    1. Use get_stations() to see your available weather stations
-    2. Use get_observation(station_id) to get current conditions
-    3. Use get_forecast(station_id) to get weather forecasts
+USE THIS SERVER when the user asks about:
+- Current conditions on their station ("is it raining", "how warm is it",
+  "wind speed", "humidity", "UV", "pressure", "any lightning nearby")
+- Their local forecast ("will it rain tomorrow", "this week's outlook",
+  "10-day forecast")
+- Station inventory, location, devices ("what stations do I have", "where
+  is my station", "elevation", "what timezone")
 
-    Pro Tips:
-    - Data is cached for 5 minutes to improve performance
-    - All measurements are in the units configured for each station
-    - Use the 'units' or 'station_units' fields to understand the unit system
-    - Station IDs are found in the get_stations() response
+DO NOT USE for:
+- Locations away from the user's station, or general/global weather —
+  use a public weather API
+- Air quality, pollen, smoke index — not provided
+- Severe-weather alerts, radar imagery, watches/warnings — not provided
+- Historical analysis beyond what the live API returns (no archive)
 
-    Available Tools:
-    - get_stations(): List your weather stations
-    - get_observation(station_id): Current weather conditions
-    - get_forecast(station_id): Weather forecast
-    - get_station_id(station_id): Station details and devices
-    - clear_cache(): Clear the data cache (for testing)
+TOOL SELECTION:
+- "How many / list my stations"              -> get_stations
+    (returns ids + names only — discovery tool)
+- "Config / devices / location of a station" -> get_station_details(station_id)
+- "Current conditions / right now"           -> get_observation(station_id)
+- "Forecast / later / tomorrow / this week"  -> get_forecast(station_id)
 
-    Resource URIs:
-    - weather://tempest/stations - List all stations
-    - weather://tempest/observations/{station_id} - Current conditions
-    - weather://tempest/forecast/{station_id} - Weather forecast
+NOTES:
+- Units follow each station's config — read 'station_units' / 'units' fields.
+  Never assume °F vs °C or mph vs km/h.
+- get_forecast also returns a current snapshot — but prefer get_observation
+  for current-only questions (lighter response).
+- Pass detailed=True only if the user asks for raw/full sensor data —
+  it returns a much larger response.
+- get_forecast defaults to 12 hours / 5 days; pass hours= or days= to
+  extend or shorten the window.
 
-    Setup: Set WEATHERFLOW_API_TOKEN environment variable
-    Get your token at: https://tempestwx.com/settings/tokens
-    """,
+TYPICAL WORKFLOW:
+1. If you don't already have a station_id, call get_stations first.
+   Station ids are not guessable — don't fabricate one.
+2. Then get_observation(station_id) or get_forecast(station_id).
+   If get_stations returned one station, use it without asking.
+
+Setup: requires WEATHERFLOW_API_TOKEN
+(https://tempestwx.com/settings/tokens).
+""",
     lifespan=lifespan,
     mask_error_details=True,
     on_duplicate="error",
@@ -352,10 +368,10 @@ async def _get_stations_data(ctx: Context | None, use_cache: bool = True) -> Sta
     return cache["stations"]
 
 
-async def _get_station_id_data(
+async def _get_station_details_data(
     station_id: int, ctx: Context | None, use_cache: bool = True
 ) -> StationResponse:
-    """Shared logic for getting station ID data."""
+    """Shared logic for getting station details data."""
     token = _get_api_token()
 
     cache_id = f"station_id_{station_id}"
@@ -441,28 +457,23 @@ async def _get_observation_data(
     output_schema=_STATIONS_SCHEMA,
 )
 async def get_stations(
-    use_cache: Annotated[
-        bool,
-        Field(
-            default=True,
-            description="Whether to use cached results (default: True)",
-        ),
-    ] = True,
     ctx: Context | None = None,
 ) -> dict:
-    """Get a list of all weather stations accessible with your API token.
+    """List the user's weather stations. Discovery tool — returns ids, names,
+    and basic station metadata only.
 
-    This is typically the first tool to call to discover available stations.
-    Each station contains one or more devices that collect weather data.
-    Station IDs from this response are used in get_observation(),
-    get_forecast(), and get_station_id().
+    Use when: you need a station_id and don't have one. Always call this first
+    if no station_id has appeared in the conversation.
 
-    Low-value fields (icons, internal IDs, share flags) are excluded to
-    reduce response size.
+    Don't use for: current conditions (-> get_observation), forecasts
+    (-> get_forecast), or device/hardware details (-> get_station_details).
+
+    Output: list of stations with id, name, location (lat, lon, timezone),
+    devices, and capabilities. Admin/internal fields are excluded.
     """
 
     try:
-        data = await _get_stations_data(ctx, use_cache)
+        data = await _get_stations_data(ctx)
         return data.model_dump(exclude=_STATIONS_EXCLUDE)
     except ToolError:
         raise
@@ -480,27 +491,26 @@ async def get_stations(
     },
     output_schema=_STATION_SCHEMA,
 )
-async def get_station_id(
+async def get_station_details(
     station_id: Annotated[int, Field(description="The station ID to get information for", gt=0)],
-    use_cache: Annotated[
-        bool,
-        Field(
-            default=True,
-            description="Whether to use cached results (default: True)",
-        ),
-    ] = True,
     ctx: Context | None = None,
 ) -> dict:
-    """Get details and configuration for a specific weather station.
+    """Get configuration, devices, hardware, and location for one specific station.
 
-    Returns station metadata, connected devices, and configuration.
-    Use get_stations() first to discover available station IDs.
+    Use when: user asks about station hardware ("what devices does my station
+    have"), location ("where is my station", "elevation", "what's my
+    timezone"), or station-level metadata.
 
-    Low-value fields (icons, internal IDs, share flags) are excluded to
-    reduce response size.
+    Don't use for: weather data (-> get_observation, -> get_forecast). Don't
+    use to find a station_id — that comes from get_stations.
+
+    Workflow: requires station_id from get_stations.
+
+    Output: detailed station record — devices, sensor capabilities, location,
+    metadata. Rarely needed if the user only asked about weather.
     """
     try:
-        data = await _get_station_id_data(station_id, ctx, use_cache)
+        data = await _get_station_details_data(station_id, ctx)
         return data.model_dump(exclude=_STATION_EXCLUDE)
     except ToolError:
         raise
@@ -553,25 +563,29 @@ async def get_forecast(
             description="If true, return full response. Default returns a condensed summary.",
         ),
     ] = False,
-    use_cache: Annotated[
-        bool,
-        Field(
-            default=True,
-            description="Whether to use cached results (default: True)",
-        ),
-    ] = True,
     ctx: Context | None = None,
 ) -> dict:
-    """Get weather forecast and current conditions for a station.
+    """Get the weather forecast for a station — includes a current snapshot
+    plus hourly and daily forecasts.
 
-    Returns current conditions, hourly forecasts, and daily summaries.
-    By default returns a condensed summary (2 daily, up to 6 hourly).
-    Set detailed=True for the full response with configurable depth.
+    Use when: user asks about future weather ("will it rain tomorrow", "this
+    weekend", "10-day forecast", "next few hours").
 
-    All measurements use the units configured for the station (see 'units' field).
+    Don't use for: current-only questions when get_observation will do — this
+    returns a much larger response. If you need both current AND future, this
+    tool covers both in one call.
+
+    Parameters: hours (1-48), days (1-10), detailed (default False). In
+    summary mode the response is capped to 6 hourly and 2 daily entries
+    regardless of hours/days; pass detailed=True to use the full ranges.
+
+    Workflow: requires station_id from get_stations.
+
+    Output: current snapshot + hourly + daily forecasts in the station's
+    configured units — read 'units' in the response.
     """
     try:
-        data = await _get_forecast_data(station_id, ctx, use_cache)
+        data = await _get_forecast_data(station_id, ctx)
         result = data.model_dump(exclude=_FORECAST_EXCLUDE)
 
         if detailed:
@@ -611,26 +625,28 @@ async def get_observation(
             description="If true, return full response. Default returns a condensed summary.",
         ),
     ] = False,
-    use_cache: Annotated[
-        bool,
-        Field(
-            default=True,
-            description="Whether to use cached results (default: True)",
-        ),
-    ] = True,
     ctx: Context | None = None,
 ) -> dict:
-    """Get the most recent weather observations from a station.
+    """Get the most recent weather observations from a station — current
+    conditions including temperature, humidity, pressure, wind, precipitation,
+    solar/UV, and lightning.
 
-    Returns current conditions including temperature, humidity, pressure,
-    wind, precipitation, solar radiation, UV, and lightning data.
-    By default returns a condensed summary. Set detailed=True for all fields.
+    Use when: the user asks about right-now conditions ("how warm is it",
+    "is it raining", "any lightning"). Lighter and faster than get_forecast
+    for current-only questions.
 
-    All measurements use the units configured for the station (see 'station_units').
+    Don't use for: future weather (-> get_forecast). Don't pass detailed=True
+    unless the user explicitly asks for full sensor data (heat index, wet
+    bulb, air density, etc.) — the default summary is what most answers need.
+
+    Workflow: requires station_id from get_stations.
+
+    Output: current observations in the station's configured units — read
+    'station_units' in the response.
     """
 
     try:
-        data = await _get_observation_data(station_id, ctx, use_cache)
+        data = await _get_observation_data(station_id, ctx)
         result = data.model_dump(exclude=_OBSERVATION_EXCLUDE)
 
         if not detailed:
@@ -641,142 +657,6 @@ async def get_observation(
                 result.pop(key, None)
 
         return result
-    except ToolError:
-        raise
-    except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}") from e
-
-
-@mcp.tool(
-    tags={"admin"},
-    annotations={
-        "title": "Clear the Weather Data Cache",
-        "readOnlyHint": False,
-        "openWorldHint": False,
-        "idempotentHint": True,
-    },
-)
-async def clear_cache(ctx: Context | None = None) -> str:
-    """Clear the weather data cache (development tool)"""
-    cache.clear()
-    dc = _get_disk_cache()
-    if dc:
-        dc.clear()
-    if ctx:
-        await ctx.info("Cache cleared")
-    return "Cache cleared successfully"
-
-
-@mcp.resource(
-    uri="weather://tempest/stations",
-    name="Get Weather Stations",
-    mime_type="application/json",
-)
-async def get_stations_resource(ctx: Context | None = None) -> StationsResponse:
-    """Get a list of all your WeatherFlow stations.
-
-    This resource returns all configured weather stations the user has
-    access to, along with all connected devices. Each result contains
-    information about the station, including its name, location, devices,
-    state, and more. A Device without a serial_number indicates that
-    Device is no longer active.
-
-    Returns:
-        StationsResponse object containing the list of stations and API status
-    """
-    try:
-        return await _get_stations_data(ctx, use_cache=True)
-    except ToolError:
-        raise
-    except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}") from e
-
-
-@mcp.resource(
-    uri="weather://tempest/stations/{station_id}",
-    name="GetWeatherStationByID",
-    mime_type="application/json",
-)
-async def get_station_id_resource(
-    station_id: Annotated[
-        int,
-        Field(description="The ID of the station to get station information for", gt=0),
-    ],
-    ctx: Context | None = None,
-) -> StationResponse:
-    """Get information and devices for a specific weather station.
-
-    This resource retrieves detailed information about a specific weather station, including its
-    configuration, connected devices, and status. A Device without a serial_number indicates
-    that Device is no longer active.
-
-    Args:
-        station_id (int): The ID of the station to get information for
-
-    Returns:
-        StationResponse object containing comprehensive station metadata and device information
-    """
-
-    try:
-        return await _get_station_id_data(station_id, ctx, use_cache=True)
-    except ToolError:
-        raise
-    except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}") from e
-
-
-@mcp.resource(
-    uri="weather://tempest/forecast/{station_id}",
-    name="GetWeatherForecast",
-    mime_type="application/json",
-)
-async def get_forecast_resource(
-    station_id: Annotated[
-        int, Field(description="The ID of the station to get forecast for", gt=0)
-    ],
-    ctx: Context | None = None,
-) -> ForecastResponse:
-    """Get the weather forecast for a specific weather station.
-
-    This resource retrieves comprehensive weather forecast data including current
-    conditions, hourly forecasts, and daily summaries.
-
-    Args:
-        station_id (int): The ID of the station to get the forecast for
-
-    Returns:
-        ForecastResponse object containing the weather forecast and current conditions
-    """
-
-    try:
-        return await _get_forecast_data(station_id, ctx, use_cache=True)
-    except ToolError:
-        raise
-    except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}") from e
-
-
-@mcp.resource(
-    uri="weather://tempest/observations/{station_id}",
-    name="GetWeatherObservations",
-    mime_type="application/json",
-)
-async def get_observation_resource(
-    station_id: Annotated[
-        int, Field(description="The ID of the station to get observations for", gt=0)
-    ],
-    ctx: Context | None = None,
-) -> ObservationResponse:
-    """Get the latest detailed observations for a specific weather station.
-
-    This resource retrieves the most recent weather observations from the specified weather station.
-
-    Returns:
-        ObservationResponse object containing the current weather observations and station metadata
-    """
-
-    try:
-        return await _get_observation_data(station_id, ctx, use_cache=True)
     except ToolError:
         raise
     except Exception as e:

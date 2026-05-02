@@ -11,7 +11,7 @@ This server enables AI assistants and applications to retrieve real-time weather
 - **Station Management**: Discover and manage multiple weather stations
 - **Device Information**: Detailed metadata about connected weather devices
 - **Intelligent Caching**: Automatic caching with configurable TTL for optimal performance
-- **Multiple Access Methods**: Both tools (interactive queries) and resources (data access)
+- **Tools for interactive queries and structured weather data**
 - **Comprehensive Data**: Temperature, humidity, pressure, wind, precipitation, solar radiation, UV index, and lightning detection
 
 
@@ -102,33 +102,16 @@ print(f"High/Low: {today.air_temp_high}°/{today.air_temp_low}°")
 print(f"Rain chance: {today.precip_probability}%")
 ```
 
-#### `get_station_id(station_id)`
+#### `get_station_details(station_id)`
 Get detailed information about a specific station.
 
 ```python
 # Get station details
-station = await client.call_tool("get_station_id", {"station_id": 12345})
+station = await client.call_tool("get_station_details", {"station_id": 12345})
 print(f"Station: {station.name}")
 print(f"Elevation: {station.station_meta.elevation}m")
 print(f"Devices: {len(station.devices)}")
 ```
-
-#### `clear_cache()`
-Clear the data cache (useful for testing).
-
-```python
-# Clear cache
-await client.call_tool("clear_cache")
-```
-
-### Available Resources
-
-The server also provides resources for data access:
-
-- `weather://tempest/stations` - List all stations
-- `weather://tempest/stations/{station_id}` - Station details
-- `weather://tempest/observations/{station_id}` - Current observations
-- `weather://tempest/forecast/{station_id}` - Weather forecast
 
 
 ## 🌟 Examples
@@ -172,7 +155,7 @@ for hour in forecast.forecast.hourly[:6]:
 
 ```python
 # Get station details
-station = await client.call_tool("get_station_id", {"station_id": station_id})
+station = await client.call_tool("get_station_details", {"station_id": station_id})
 
 print(f"🏠 Station: {station.name}")
 print(f"📍 Location: {station.latitude}°, {station.longitude}°")
