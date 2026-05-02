@@ -1,9 +1,9 @@
 """
 WeatherFlow Tempest MCP Server
 
-This module provides a Model Context Protocol (MCP) server for accessing WeatherFlow Tempest
-weather station data. It offers both tools (for interactive queries) and resources
-(for data access) to retrieve real-time weather observations, forecasts, and station metadata.
+This module provides a Model Context Protocol (MCP) server for accessing
+WeatherFlow Tempest weather station data. It exposes tools for retrieving
+real-time weather observations, forecasts, and station metadata.
 
 Features:
 - Real-time weather observations from personal weather stations
@@ -29,8 +29,8 @@ Example Usage:
     # Get current conditions for a specific station
     conditions = await client.call_tool("get_observation", {"station_id": 12345})
 
-    # Access via resources
-    forecast = await client.read_resource("weather://tempest/forecast/12345")
+    # Get the forecast
+    forecast = await client.call_tool("get_forecast", {"station_id": 12345})
 """
 
 import logging

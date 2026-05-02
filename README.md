@@ -113,23 +113,6 @@ print(f"Elevation: {station.station_meta.elevation}m")
 print(f"Devices: {len(station.devices)}")
 ```
 
-#### `clear_cache()`
-Clear the data cache (useful for testing).
-
-```python
-# Clear cache
-await client.call_tool("clear_cache")
-```
-
-### Available Resources
-
-The server also provides resources for data access:
-
-- `weather://tempest/stations` - List all stations
-- `weather://tempest/stations/{station_id}` - Station details
-- `weather://tempest/observations/{station_id}` - Current observations
-- `weather://tempest/forecast/{station_id}` - Weather forecast
-
 
 ## 🌟 Examples
 
