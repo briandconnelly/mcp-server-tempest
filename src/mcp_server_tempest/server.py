@@ -457,13 +457,6 @@ async def _get_observation_data(
     output_schema=_STATIONS_SCHEMA,
 )
 async def get_stations(
-    use_cache: Annotated[
-        bool,
-        Field(
-            default=True,
-            description="Whether to use cached results (default: True)",
-        ),
-    ] = True,
     ctx: Context | None = None,
 ) -> dict:
     """List the user's weather stations. Discovery tool — returns ids, names,
@@ -480,7 +473,7 @@ async def get_stations(
     """
 
     try:
-        data = await _get_stations_data(ctx, use_cache)
+        data = await _get_stations_data(ctx)
         return data.model_dump(exclude=_STATIONS_EXCLUDE)
     except ToolError:
         raise
@@ -500,13 +493,6 @@ async def get_stations(
 )
 async def get_station_id(
     station_id: Annotated[int, Field(description="The station ID to get information for", gt=0)],
-    use_cache: Annotated[
-        bool,
-        Field(
-            default=True,
-            description="Whether to use cached results (default: True)",
-        ),
-    ] = True,
     ctx: Context | None = None,
 ) -> dict:
     """Get configuration, devices, hardware, and location for one specific station.
@@ -524,7 +510,7 @@ async def get_station_id(
     metadata. Rarely needed if the user only asked about weather.
     """
     try:
-        data = await _get_station_id_data(station_id, ctx, use_cache)
+        data = await _get_station_id_data(station_id, ctx)
         return data.model_dump(exclude=_STATION_EXCLUDE)
     except ToolError:
         raise
@@ -577,13 +563,6 @@ async def get_forecast(
             description="If true, return full response. Default returns a condensed summary.",
         ),
     ] = False,
-    use_cache: Annotated[
-        bool,
-        Field(
-            default=True,
-            description="Whether to use cached results (default: True)",
-        ),
-    ] = True,
     ctx: Context | None = None,
 ) -> dict:
     """Get the weather forecast for a station — includes a current snapshot
@@ -606,7 +585,7 @@ async def get_forecast(
     configured units — read 'units' in the response.
     """
     try:
-        data = await _get_forecast_data(station_id, ctx, use_cache)
+        data = await _get_forecast_data(station_id, ctx)
         result = data.model_dump(exclude=_FORECAST_EXCLUDE)
 
         if detailed:
@@ -646,13 +625,6 @@ async def get_observation(
             description="If true, return full response. Default returns a condensed summary.",
         ),
     ] = False,
-    use_cache: Annotated[
-        bool,
-        Field(
-            default=True,
-            description="Whether to use cached results (default: True)",
-        ),
-    ] = True,
     ctx: Context | None = None,
 ) -> dict:
     """Get the most recent weather observations from a station — current
@@ -674,7 +646,7 @@ async def get_observation(
     """
 
     try:
-        data = await _get_observation_data(station_id, ctx, use_cache)
+        data = await _get_observation_data(station_id, ctx)
         result = data.model_dump(exclude=_OBSERVATION_EXCLUDE)
 
         if not detailed:
