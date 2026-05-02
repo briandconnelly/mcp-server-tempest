@@ -19,3 +19,6 @@ wheels/
 
 # OS
 .DS_Store
+
+# Superpowers specs (local-only)
+docs/superpowers/
