@@ -25,13 +25,9 @@ from mcp_server_tempest.server import (
     _relaxed_schema,
     cache,
     get_forecast,
-    get_forecast_resource,
     get_observation,
-    get_observation_resource,
     get_station_id,
-    get_station_id_resource,
     get_stations,
-    get_stations_resource,
     health_check,
     lifespan,
     mcp,
@@ -499,84 +495,6 @@ class TestTools:
             pytest.raises(ToolError, match="Request failed"),
         ):
             await get_observation(station_id=12345, ctx=mock_ctx)
-
-
-# -- Tests for resource functions --
-
-
-@pytest.mark.usefixtures("_set_token")
-class TestResources:
-    async def test_get_stations_resource(self, mock_ctx):
-        with patch(
-            "mcp_server_tempest.server.api_get_stations",
-            return_value=SAMPLE_STATION_DATA,
-        ):
-            result = await get_stations_resource(ctx=mock_ctx)
-            assert len(result.stations) == 1
-
-    async def test_get_stations_resource_error(self, mock_ctx):
-        with (
-            patch(
-                "mcp_server_tempest.server.api_get_stations",
-                side_effect=Exception("fail"),
-            ),
-            pytest.raises(ToolError),
-        ):
-            await get_stations_resource(ctx=mock_ctx)
-
-    async def test_get_station_id_resource(self, mock_ctx):
-        with patch(
-            "mcp_server_tempest.server.api_get_station_id",
-            return_value=SAMPLE_SINGLE_STATION_DATA,
-        ):
-            result = await get_station_id_resource(station_id=12345, ctx=mock_ctx)
-            assert result.station_id == 12345
-
-    async def test_get_station_id_resource_error(self, mock_ctx):
-        with (
-            patch(
-                "mcp_server_tempest.server.api_get_station_id",
-                side_effect=Exception("fail"),
-            ),
-            pytest.raises(ToolError),
-        ):
-            await get_station_id_resource(station_id=12345, ctx=mock_ctx)
-
-    async def test_get_forecast_resource(self, mock_ctx):
-        with patch(
-            "mcp_server_tempest.server.api_get_forecast",
-            return_value=SAMPLE_FORECAST_DATA,
-        ):
-            result = await get_forecast_resource(station_id=12345, ctx=mock_ctx)
-            assert result.location_name == "Seattle"
-
-    async def test_get_forecast_resource_error(self, mock_ctx):
-        with (
-            patch(
-                "mcp_server_tempest.server.api_get_forecast",
-                side_effect=Exception("fail"),
-            ),
-            pytest.raises(ToolError),
-        ):
-            await get_forecast_resource(station_id=12345, ctx=mock_ctx)
-
-    async def test_get_observation_resource(self, mock_ctx):
-        with patch(
-            "mcp_server_tempest.server.api_get_observation",
-            return_value=SAMPLE_OBSERVATION_DATA,
-        ):
-            result = await get_observation_resource(station_id=12345, ctx=mock_ctx)
-            assert result.station_id == 12345
-
-    async def test_get_observation_resource_error(self, mock_ctx):
-        with (
-            patch(
-                "mcp_server_tempest.server.api_get_observation",
-                side_effect=Exception("fail"),
-            ),
-            pytest.raises(ToolError),
-        ):
-            await get_observation_resource(station_id=12345, ctx=mock_ctx)
 
 
 # -- Tests for lifespan --
