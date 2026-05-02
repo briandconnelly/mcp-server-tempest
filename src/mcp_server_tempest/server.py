@@ -140,20 +140,22 @@ DO NOT USE for:
 
 TOOL SELECTION:
 - "How many / list my stations"              -> get_stations
-    (returns ids + names only — discovery tool)
-- "Config / devices / location of a station" -> get_station_details(station_id)
+    (returns full station listing — id, name, location, devices, capabilities)
+- "Deeper config / hardware for one station" -> get_station_details(station_id)
 - "Current conditions / right now"           -> get_observation(station_id)
 - "Forecast / later / tomorrow / this week"  -> get_forecast(station_id)
 
 NOTES:
 - Units follow each station's config — read 'station_units' / 'units' fields.
   Never assume °F vs °C or mph vs km/h.
+- get_stations already returns devices and capabilities for each station —
+  only call get_station_details if you need the deeper per-station record.
 - get_forecast also returns a current snapshot — but prefer get_observation
   for current-only questions (lighter response).
-- Pass detailed=True only if the user asks for raw/full sensor data —
-  it returns a much larger response.
-- get_forecast defaults to 12 hours / 5 days; pass hours= or days= to
-  extend or shorten the window.
+- get_forecast accepts hours (1-48) and days (1-10), but the default summary
+  response is capped to 6 hourly / 2 daily entries regardless of those
+  values. Pass detailed=True to use the full hours/days ranges (and to get
+  raw/full sensor data) — it returns a much larger response.
 
 TYPICAL WORKFLOW:
 1. If you don't already have a station_id, call get_stations first.
@@ -459,14 +461,16 @@ async def _get_observation_data(
 async def get_stations(
     ctx: Context | None = None,
 ) -> dict:
-    """List the user's weather stations. Discovery tool — returns ids, names,
-    and basic station metadata only.
+    """List the user's weather stations along with each station's location,
+    devices, and capabilities.
 
     Use when: you need a station_id and don't have one. Always call this first
-    if no station_id has appeared in the conversation.
+    if no station_id has appeared in the conversation. The response also
+    covers most "what stations / where / what devices" questions without a
+    follow-up call to get_station_details.
 
-    Don't use for: current conditions (-> get_observation), forecasts
-    (-> get_forecast), or device/hardware details (-> get_station_details).
+    Don't use for: current conditions (-> get_observation) or forecasts
+    (-> get_forecast).
 
     Output: list of stations with id, name, location (lat, lon, timezone),
     devices, and capabilities. Admin/internal fields are excluded.
