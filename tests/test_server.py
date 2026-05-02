@@ -19,14 +19,14 @@ from mcp_server_tempest.server import (
     _get_disk_cache,
     _get_forecast_data,
     _get_observation_data,
-    _get_station_id_data,
+    _get_station_details_data,
     _get_stations_data,
     _int_env,
     _relaxed_schema,
     cache,
     get_forecast,
     get_observation,
-    get_station_id,
+    get_station_details,
     get_stations,
     health_check,
     lifespan,
@@ -318,26 +318,26 @@ class TestGetStationsData:
 
 
 @pytest.mark.usefixtures("_set_token")
-class TestGetStationIdData:
+class TestGetStationDetailsData:
     async def test_fetches_from_api(self, mock_ctx):
         with patch(
             "mcp_server_tempest.server.api_get_station_id",
             return_value=SAMPLE_SINGLE_STATION_DATA,
         ):
-            result = await _get_station_id_data(12345, mock_ctx, use_cache=False)
+            result = await _get_station_details_data(12345, mock_ctx, use_cache=False)
             assert result.station_id == 12345
             mock_ctx.report_progress.assert_any_call(progress=1, total=1)
 
     async def test_returns_cached_data(self, mock_ctx):
         cache["station_id_12345"] = "cached_station"
-        result = await _get_station_id_data(12345, mock_ctx, use_cache=True)
+        result = await _get_station_details_data(12345, mock_ctx, use_cache=True)
         assert result == "cached_station"
 
     async def test_different_station_ids_cached_separately(self, mock_ctx):
         cache["station_id_111"] = "station_a"
         cache["station_id_222"] = "station_b"
-        result_a = await _get_station_id_data(111, mock_ctx, use_cache=True)
-        result_b = await _get_station_id_data(222, mock_ctx, use_cache=True)
+        result_a = await _get_station_details_data(111, mock_ctx, use_cache=True)
+        result_b = await _get_station_details_data(222, mock_ctx, use_cache=True)
         assert result_a == "station_a"
         assert result_b == "station_b"
 
@@ -346,7 +346,7 @@ class TestGetStationIdData:
             "mcp_server_tempest.server.api_get_station_id",
             return_value=SAMPLE_SINGLE_STATION_DATA,
         ):
-            result = await _get_station_id_data(12345, None, use_cache=False)
+            result = await _get_station_details_data(12345, None, use_cache=False)
             assert result.station_id == 12345
 
 
@@ -442,15 +442,15 @@ class TestTools:
         ):
             await get_stations(ctx=mock_ctx)
 
-    async def test_get_station_id(self, mock_ctx):
+    async def test_get_station_details(self, mock_ctx):
         with patch(
             "mcp_server_tempest.server.api_get_station_id",
             return_value=SAMPLE_SINGLE_STATION_DATA,
         ):
-            result = await get_station_id(station_id=12345, ctx=mock_ctx)
+            result = await get_station_details(station_id=12345, ctx=mock_ctx)
             assert result["station_id"] == 12345
 
-    async def test_get_station_id_error(self, mock_ctx):
+    async def test_get_station_details_error(self, mock_ctx):
         with (
             patch(
                 "mcp_server_tempest.server.api_get_station_id",
@@ -458,7 +458,7 @@ class TestTools:
             ),
             pytest.raises(ToolError, match="Request failed"),
         ):
-            await get_station_id(station_id=99999, ctx=mock_ctx)
+            await get_station_details(station_id=99999, ctx=mock_ctx)
 
     async def test_get_forecast(self, mock_ctx):
         with patch(
@@ -569,7 +569,7 @@ class TestFieldExclusion:
             "mcp_server_tempest.server.api_get_station_id",
             return_value=SAMPLE_SINGLE_STATION_DATA,
         ):
-            result = await get_station_id(station_id=12345, ctx=mock_ctx)
+            result = await get_station_details(station_id=12345, ctx=mock_ctx)
             assert "created_epoch" not in result
             assert "last_modified_epoch" not in result
 
@@ -1057,6 +1057,6 @@ class TestDiskCacheIntegration:
         dc.set("station_id_12345", station_data)
 
         with patch.object(server_module, "_get_disk_cache", return_value=dc):
-            result = await _get_station_id_data(12345, mock_ctx, use_cache=True)
+            result = await _get_station_details_data(12345, mock_ctx, use_cache=True)
             assert result.station_id == 12345
             mock_ctx.info.assert_called_with("Using disk-cached station data for station 12345")

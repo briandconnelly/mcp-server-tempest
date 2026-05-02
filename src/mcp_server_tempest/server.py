@@ -368,10 +368,10 @@ async def _get_stations_data(ctx: Context | None, use_cache: bool = True) -> Sta
     return cache["stations"]
 
 
-async def _get_station_id_data(
+async def _get_station_details_data(
     station_id: int, ctx: Context | None, use_cache: bool = True
 ) -> StationResponse:
-    """Shared logic for getting station ID data."""
+    """Shared logic for getting station details data."""
     token = _get_api_token()
 
     cache_id = f"station_id_{station_id}"
@@ -491,7 +491,7 @@ async def get_stations(
     },
     output_schema=_STATION_SCHEMA,
 )
-async def get_station_id(
+async def get_station_details(
     station_id: Annotated[int, Field(description="The station ID to get information for", gt=0)],
     ctx: Context | None = None,
 ) -> dict:
@@ -510,7 +510,7 @@ async def get_station_id(
     metadata. Rarely needed if the user only asked about weather.
     """
     try:
-        data = await _get_station_id_data(station_id, ctx)
+        data = await _get_station_details_data(station_id, ctx)
         return data.model_dump(exclude=_STATION_EXCLUDE)
     except ToolError:
         raise
