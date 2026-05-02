@@ -576,7 +576,7 @@ async def get_forecast(
     tool covers both in one call.
 
     Parameters: hours (1-48), days (1-10), detailed (default False). In
-    summary mode the response is capped to ~6 hourly and ~2 daily entries
+    summary mode the response is capped to 6 hourly and 2 daily entries
     regardless of hours/days; pass detailed=True to use the full ranges.
 
     Workflow: requires station_id from get_stations.
