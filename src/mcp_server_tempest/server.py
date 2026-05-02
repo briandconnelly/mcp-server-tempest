@@ -466,15 +466,17 @@ async def get_stations(
     ] = True,
     ctx: Context | None = None,
 ) -> dict:
-    """Get a list of all weather stations accessible with your API token.
+    """List the user's weather stations. Discovery tool — returns ids, names,
+    and basic station metadata only.
 
-    This is typically the first tool to call to discover available stations.
-    Each station contains one or more devices that collect weather data.
-    Station IDs from this response are used in get_observation(),
-    get_forecast(), and get_station_id().
+    Use when: you need a station_id and don't have one. Always call this first
+    if no station_id has appeared in the conversation.
 
-    Low-value fields (icons, internal IDs, share flags) are excluded to
-    reduce response size.
+    Don't use for: current conditions (-> get_observation), forecasts
+    (-> get_forecast), or device/hardware details (-> get_station_details).
+
+    Output: list of stations with id, name, location (lat, lon, timezone),
+    devices, and capabilities. Admin/internal fields are excluded.
     """
 
     try:
@@ -507,13 +509,19 @@ async def get_station_id(
     ] = True,
     ctx: Context | None = None,
 ) -> dict:
-    """Get details and configuration for a specific weather station.
+    """Get configuration, devices, hardware, and location for one specific station.
 
-    Returns station metadata, connected devices, and configuration.
-    Use get_stations() first to discover available station IDs.
+    Use when: user asks about station hardware ("what devices does my station
+    have"), location ("where is my station", "elevation", "what's my
+    timezone"), or station-level metadata.
 
-    Low-value fields (icons, internal IDs, share flags) are excluded to
-    reduce response size.
+    Don't use for: weather data (-> get_observation, -> get_forecast). Don't
+    use to find a station_id — that comes from get_stations.
+
+    Workflow: requires station_id from get_stations.
+
+    Output: detailed station record — devices, sensor capabilities, location,
+    metadata. Rarely needed if the user only asked about weather.
     """
     try:
         data = await _get_station_id_data(station_id, ctx, use_cache)
@@ -578,13 +586,24 @@ async def get_forecast(
     ] = True,
     ctx: Context | None = None,
 ) -> dict:
-    """Get weather forecast and current conditions for a station.
+    """Get the weather forecast for a station — includes a current snapshot
+    plus hourly and daily forecasts.
 
-    Returns current conditions, hourly forecasts, and daily summaries.
-    By default returns a condensed summary (2 daily, up to 6 hourly).
-    Set detailed=True for the full response with configurable depth.
+    Use when: user asks about future weather ("will it rain tomorrow", "this
+    weekend", "10-day forecast", "next few hours").
 
-    All measurements use the units configured for the station (see 'units' field).
+    Don't use for: current-only questions when get_observation will do — this
+    returns a much larger response. If you need both current AND future, this
+    tool covers both in one call.
+
+    Parameters: hours (1-48), days (1-10), detailed (default False). In
+    summary mode the response is capped to ~6 hourly and ~2 daily entries
+    regardless of hours/days; pass detailed=True to use the full ranges.
+
+    Workflow: requires station_id from get_stations.
+
+    Output: current snapshot + hourly + daily forecasts in the station's
+    configured units — read 'units' in the response.
     """
     try:
         data = await _get_forecast_data(station_id, ctx, use_cache)
@@ -636,13 +655,22 @@ async def get_observation(
     ] = True,
     ctx: Context | None = None,
 ) -> dict:
-    """Get the most recent weather observations from a station.
+    """Get the most recent weather observations from a station — current
+    conditions including temperature, humidity, pressure, wind, precipitation,
+    solar/UV, and lightning.
 
-    Returns current conditions including temperature, humidity, pressure,
-    wind, precipitation, solar radiation, UV, and lightning data.
-    By default returns a condensed summary. Set detailed=True for all fields.
+    Use when: the user asks about right-now conditions ("how warm is it",
+    "is it raining", "any lightning"). Lighter and faster than get_forecast
+    for current-only questions.
 
-    All measurements use the units configured for the station (see 'station_units').
+    Don't use for: future weather (-> get_forecast). Don't pass detailed=True
+    unless the user explicitly asks for full sensor data (heat index, wet
+    bulb, air density, etc.) — the default summary is what most answers need.
+
+    Workflow: requires station_id from get_stations.
+
+    Output: current observations in the station's configured units — read
+    'station_units' in the response.
     """
 
     try:
