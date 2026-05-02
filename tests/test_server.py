@@ -24,7 +24,6 @@ from mcp_server_tempest.server import (
     _int_env,
     _relaxed_schema,
     cache,
-    clear_cache,
     get_forecast,
     get_forecast_resource,
     get_observation,
@@ -279,29 +278,6 @@ class TestCache:
         cache["key2"] = "val2"
         cache.clear()
         assert len(cache) == 0
-
-
-# -- Tests for clear_cache tool --
-
-
-class TestClearCacheTool:
-    async def test_clears_cache(self):
-        cache["test"] = "data"
-        assert len(cache) == 1
-
-        result = await clear_cache()
-        assert result == "Cache cleared successfully"
-        assert len(cache) == 0
-
-    async def test_with_context(self):
-        ctx = AsyncMock()
-        result = await clear_cache(ctx=ctx)
-        assert result == "Cache cleared successfully"
-        ctx.info.assert_called_once_with("Cache cleared")
-
-    async def test_without_context(self):
-        result = await clear_cache(ctx=None)
-        assert result == "Cache cleared successfully"
 
 
 # -- Tests for helper functions (_get_*_data) --

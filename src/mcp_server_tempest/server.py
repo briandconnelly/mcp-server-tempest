@@ -663,26 +663,6 @@ async def get_observation(
         raise ToolError(f"Request failed: {str(e)}") from e
 
 
-@mcp.tool(
-    tags={"admin"},
-    annotations={
-        "title": "Clear the Weather Data Cache",
-        "readOnlyHint": False,
-        "openWorldHint": False,
-        "idempotentHint": True,
-    },
-)
-async def clear_cache(ctx: Context | None = None) -> str:
-    """Clear the weather data cache (development tool)"""
-    cache.clear()
-    dc = _get_disk_cache()
-    if dc:
-        dc.clear()
-    if ctx:
-        await ctx.info("Cache cleared")
-    return "Cache cleared successfully"
-
-
 @mcp.resource(
     uri="weather://tempest/stations",
     name="Get Weather Stations",
