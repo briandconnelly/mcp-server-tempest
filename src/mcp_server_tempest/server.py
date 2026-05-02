@@ -120,34 +120,50 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
 mcp = FastMCP(
     name="WeatherFlow Tempest API Server",
     instructions="""\
-    WeatherFlow Tempest weather station data server.
+WeatherFlow Tempest — read-only access to a user's personal Tempest weather
+station(s). Not a global weather service.
 
-    Quick Start:
-    1. Use get_stations() to see your available weather stations
-    2. Use get_observation(station_id) to get current conditions
-    3. Use get_forecast(station_id) to get weather forecasts
+USE THIS SERVER when the user asks about:
+- Current conditions on their station ("is it raining", "how warm is it",
+  "wind speed", "humidity", "UV", "pressure", "any lightning nearby")
+- Their local forecast ("will it rain tomorrow", "this week's outlook",
+  "10-day forecast")
+- Station inventory, location, devices ("what stations do I have", "where
+  is my station", "elevation", "what timezone")
 
-    Pro Tips:
-    - Data is cached for 5 minutes to improve performance
-    - All measurements are in the units configured for each station
-    - Use the 'units' or 'station_units' fields to understand the unit system
-    - Station IDs are found in the get_stations() response
+DO NOT USE for:
+- Locations away from the user's station, or general/global weather —
+  use a public weather API
+- Air quality, pollen, smoke index — not provided
+- Severe-weather alerts, radar imagery, watches/warnings — not provided
+- Historical analysis beyond what the live API returns (no archive)
 
-    Available Tools:
-    - get_stations(): List your weather stations
-    - get_observation(station_id): Current weather conditions
-    - get_forecast(station_id): Weather forecast
-    - get_station_id(station_id): Station details and devices
-    - clear_cache(): Clear the data cache (for testing)
+TOOL SELECTION:
+- "How many / list my stations"              -> get_stations
+    (returns ids + names only — discovery tool)
+- "Config / devices / location of a station" -> get_station_details(station_id)
+- "Current conditions / right now"           -> get_observation(station_id)
+- "Forecast / later / tomorrow / this week"  -> get_forecast(station_id)
 
-    Resource URIs:
-    - weather://tempest/stations - List all stations
-    - weather://tempest/observations/{station_id} - Current conditions
-    - weather://tempest/forecast/{station_id} - Weather forecast
+NOTES:
+- Units follow each station's config — read 'station_units' / 'units' fields.
+  Never assume °F vs °C or mph vs km/h.
+- get_forecast also returns a current snapshot — but prefer get_observation
+  for current-only questions (lighter response).
+- Pass detailed=True only if the user asks for raw/full sensor data —
+  it returns a much larger response.
+- get_forecast defaults to 12 hours / 5 days; pass hours= or days= to
+  extend or shorten the window.
 
-    Setup: Set WEATHERFLOW_API_TOKEN environment variable
-    Get your token at: https://tempestwx.com/settings/tokens
-    """,
+TYPICAL WORKFLOW:
+1. If you don't already have a station_id, call get_stations first.
+   Station ids are not guessable — don't fabricate one.
+2. Then get_observation(station_id) or get_forecast(station_id).
+   If get_stations returned one station, use it without asking.
+
+Setup: requires WEATHERFLOW_API_TOKEN
+(https://tempestwx.com/settings/tokens).
+""",
     lifespan=lifespan,
     mask_error_details=True,
     on_duplicate="error",

@@ -1046,6 +1046,33 @@ class TestHealthCheck:
         assert response.body == b'{"status":"ok"}'
 
 
+# -- Tests for server instructions --
+
+
+class TestServerInstructions:
+    """Regression guards on the server-level instructions string."""
+
+    def test_instructions_non_empty(self):
+        assert mcp.instructions
+        assert isinstance(mcp.instructions, str)
+        assert len(mcp.instructions) > 200
+
+    def test_instructions_lists_each_tool(self):
+        text = mcp.instructions
+        for tool_name in (
+            "get_stations",
+            "get_station_details",
+            "get_observation",
+            "get_forecast",
+        ):
+            assert tool_name in text, f"{tool_name} missing from instructions"
+
+    def test_instructions_has_scope_sections(self):
+        text = mcp.instructions
+        for marker in ("USE THIS SERVER", "DO NOT USE", "TOOL SELECTION"):
+            assert marker in text, f"{marker!r} missing from instructions"
+
+
 # -- Tests for _int_env --
 
 
