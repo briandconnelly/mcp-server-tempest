@@ -42,7 +42,7 @@ from typing import Annotated
 from cachetools import TTLCache
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
-from pydantic import Field
+from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -177,7 +177,7 @@ def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
 
 
 def _relaxed_schema(
-    model_class: type,
+    model_class: type[BaseModel],
     optional_fields: dict[str, set[str]],
 ) -> dict:
     """Generate a JSON schema where only specified fields are made non-required.
@@ -322,34 +322,38 @@ _OBSERVATION_SUMMARY_FIELDS: set[str] = {
 }
 
 
-async def _get_stations_data(ctx: Context, use_cache: bool = True) -> StationsResponse:
+async def _get_stations_data(ctx: Context | None, use_cache: bool = True) -> StationsResponse:
     """Shared logic for getting stations data."""
     token = _get_api_token()
 
     if use_cache and "stations" in cache:
-        await ctx.info("Using cached station data")
+        if ctx:
+            await ctx.info("Using cached station data")
         return cache["stations"]
 
     dc = _get_disk_cache()
     if use_cache and dc:
         hit = dc.get("stations", StationsResponse)
         if hit is not None:
-            await ctx.info("Using disk-cached station data")
+            if ctx:
+                await ctx.info("Using disk-cached station data")
             cache["stations"] = hit
             return hit
 
-    await ctx.report_progress(progress=0, total=1)
-    await ctx.info("Getting available stations via the Tempest API")
+    if ctx:
+        await ctx.report_progress(progress=0, total=1)
+        await ctx.info("Getting available stations via the Tempest API")
     result = await api_get_stations(token)
     cache["stations"] = StationsResponse(**result)
     if dc:
         dc.set("stations", cache["stations"])
-    await ctx.report_progress(progress=1, total=1)
+    if ctx:
+        await ctx.report_progress(progress=1, total=1)
     return cache["stations"]
 
 
 async def _get_station_id_data(
-    station_id: int, ctx: Context, use_cache: bool = True
+    station_id: int, ctx: Context | None, use_cache: bool = True
 ) -> StationResponse:
     """Shared logic for getting station ID data."""
     token = _get_api_token()
@@ -357,62 +361,72 @@ async def _get_station_id_data(
     cache_id = f"station_id_{station_id}"
 
     if use_cache and cache_id in cache:
-        await ctx.info(f"Using cached station data for station {station_id}")
+        if ctx:
+            await ctx.info(f"Using cached station data for station {station_id}")
         return cache[cache_id]
 
     dc = _get_disk_cache()
     if use_cache and dc:
         hit = dc.get(cache_id, StationResponse)
         if hit is not None:
-            await ctx.info(f"Using disk-cached station data for station {station_id}")
+            if ctx:
+                await ctx.info(f"Using disk-cached station data for station {station_id}")
             cache[cache_id] = hit
             return hit
 
-    await ctx.report_progress(progress=0, total=1)
-    await ctx.info(f"Getting station ID data for station {station_id} via the Tempest API")
+    if ctx:
+        await ctx.report_progress(progress=0, total=1)
+        await ctx.info(f"Getting station ID data for station {station_id} via the Tempest API")
     result = await api_get_station_id(station_id, token)
     cache[cache_id] = StationResponse(**result)
     if dc:
         dc.set(cache_id, cache[cache_id])
-    await ctx.report_progress(progress=1, total=1)
+    if ctx:
+        await ctx.report_progress(progress=1, total=1)
     return cache[cache_id]
 
 
 async def _get_forecast_data(
-    station_id: int, ctx: Context, use_cache: bool = True
+    station_id: int, ctx: Context | None, use_cache: bool = True
 ) -> ForecastResponse:
     """Shared logic for getting forecast data."""
     token = _get_api_token()
 
     cache_id = f"forecast_{station_id}"
     if use_cache and cache_id in cache:
-        await ctx.info(f"Using cached forecast data for station {station_id}")
+        if ctx:
+            await ctx.info(f"Using cached forecast data for station {station_id}")
         return cache[cache_id]
 
-    await ctx.report_progress(progress=0, total=1)
-    await ctx.info(f"Getting forecast for station {station_id} via the Tempest API")
+    if ctx:
+        await ctx.report_progress(progress=0, total=1)
+        await ctx.info(f"Getting forecast for station {station_id} via the Tempest API")
     result = await api_get_forecast(station_id, token)
     cache[cache_id] = ForecastResponse(**result)
-    await ctx.report_progress(progress=1, total=1)
+    if ctx:
+        await ctx.report_progress(progress=1, total=1)
     return cache[cache_id]
 
 
 async def _get_observation_data(
-    station_id: int, ctx: Context, use_cache: bool = True
+    station_id: int, ctx: Context | None, use_cache: bool = True
 ) -> ObservationResponse:
     """Shared logic for getting observation data."""
     token = _get_api_token()
 
     cache_id = f"observation_{station_id}"
     if use_cache and cache_id in cache:
-        await ctx.info(f"Using cached observation data for station {station_id}")
+        if ctx:
+            await ctx.info(f"Using cached observation data for station {station_id}")
         return cache[cache_id]
 
-    await ctx.report_progress(progress=0, total=1)
-    await ctx.info(f"Getting observations for station {station_id} via the Tempest API")
+    if ctx:
+        await ctx.report_progress(progress=0, total=1)
+        await ctx.info(f"Getting observations for station {station_id} via the Tempest API")
     result = await api_get_observation(station_id, token)
     cache[cache_id] = ObservationResponse(**result)
-    await ctx.report_progress(progress=1, total=1)
+    if ctx:
+        await ctx.report_progress(progress=1, total=1)
     return cache[cache_id]
 
 
@@ -434,7 +448,7 @@ async def get_stations(
             description="Whether to use cached results (default: True)",
         ),
     ] = True,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> dict:
     """Get a list of all weather stations accessible with your API token.
 
@@ -475,7 +489,7 @@ async def get_station_id(
             description="Whether to use cached results (default: True)",
         ),
     ] = True,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> dict:
     """Get details and configuration for a specific weather station.
 
@@ -546,7 +560,7 @@ async def get_forecast(
             description="Whether to use cached results (default: True)",
         ),
     ] = True,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> dict:
     """Get weather forecast and current conditions for a station.
 
@@ -604,7 +618,7 @@ async def get_observation(
             description="Whether to use cached results (default: True)",
         ),
     ] = True,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> dict:
     """Get the most recent weather observations from a station.
 
@@ -642,7 +656,7 @@ async def get_observation(
         "idempotentHint": True,
     },
 )
-async def clear_cache(ctx: Context = None) -> str:
+async def clear_cache(ctx: Context | None = None) -> str:
     """Clear the weather data cache (development tool)"""
     cache.clear()
     dc = _get_disk_cache()
@@ -658,7 +672,7 @@ async def clear_cache(ctx: Context = None) -> str:
     name="Get Weather Stations",
     mime_type="application/json",
 )
-async def get_stations_resource(ctx: Context = None) -> StationsResponse:
+async def get_stations_resource(ctx: Context | None = None) -> StationsResponse:
     """Get a list of all your WeatherFlow stations.
 
     This resource returns all configured weather stations the user has
@@ -688,7 +702,7 @@ async def get_station_id_resource(
         int,
         Field(description="The ID of the station to get station information for", gt=0),
     ],
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> StationResponse:
     """Get information and devices for a specific weather station.
 
@@ -720,7 +734,7 @@ async def get_forecast_resource(
     station_id: Annotated[
         int, Field(description="The ID of the station to get forecast for", gt=0)
     ],
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> ForecastResponse:
     """Get the weather forecast for a specific weather station.
 
@@ -751,7 +765,7 @@ async def get_observation_resource(
     station_id: Annotated[
         int, Field(description="The ID of the station to get observations for", gt=0)
     ],
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> ObservationResponse:
     """Get the latest detailed observations for a specific weather station.
 

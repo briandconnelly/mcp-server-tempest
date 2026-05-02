@@ -336,6 +336,14 @@ class TestGetStationsData:
             result = await _get_stations_data(mock_ctx, use_cache=False)
             assert result.stations[0].station_id == 12345
 
+    async def test_handles_none_ctx(self):
+        with patch(
+            "mcp_server_tempest.server.api_get_stations",
+            return_value=SAMPLE_STATION_DATA,
+        ):
+            result = await _get_stations_data(None, use_cache=False)
+            assert result.stations[0].station_id == 12345
+
 
 @pytest.mark.usefixtures("_set_token")
 class TestGetStationIdData:
@@ -361,6 +369,14 @@ class TestGetStationIdData:
         assert result_a == "station_a"
         assert result_b == "station_b"
 
+    async def test_handles_none_ctx(self):
+        with patch(
+            "mcp_server_tempest.server.api_get_station_id",
+            return_value=SAMPLE_SINGLE_STATION_DATA,
+        ):
+            result = await _get_station_id_data(12345, None, use_cache=False)
+            assert result.station_id == 12345
+
 
 @pytest.mark.usefixtures("_set_token")
 class TestGetForecastData:
@@ -378,6 +394,14 @@ class TestGetForecastData:
         result = await _get_forecast_data(12345, mock_ctx, use_cache=True)
         assert result == "cached_forecast"
 
+    async def test_handles_none_ctx(self):
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await _get_forecast_data(12345, None, use_cache=False)
+            assert result.location_name == "Seattle"
+
 
 @pytest.mark.usefixtures("_set_token")
 class TestGetObservationData:
@@ -394,6 +418,33 @@ class TestGetObservationData:
         cache["observation_12345"] = "cached_obs"
         result = await _get_observation_data(12345, mock_ctx, use_cache=True)
         assert result == "cached_obs"
+
+    async def test_handles_none_ctx(self):
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = await _get_observation_data(12345, None, use_cache=False)
+            assert result.station_id == 12345
+
+
+# -- Tests for FastMCP tool registration --
+
+
+class TestToolSchemas:
+    """Guard against FastMCP version bumps that might change how `Context | None`
+    parameters are reflected. The `ctx` parameter is injected by FastMCP at call
+    time and must never appear in a tool's public input schema."""
+
+    async def test_ctx_not_exposed_in_any_tool_schema(self):
+        tools = await mcp.list_tools()
+        assert tools, "expected tools to be registered"
+        for tool in tools:
+            schema = getattr(tool, "inputSchema", None) or getattr(tool, "parameters", {})
+            props = schema.get("properties", {}) if isinstance(schema, dict) else {}
+            assert "ctx" not in props, (
+                f"tool {tool.name!r} unexpectedly exposes `ctx` in its input schema"
+            )
 
 
 # -- Tests for tool functions --
