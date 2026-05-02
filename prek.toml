@@ -1,11 +1,14 @@
 default_install_hook_types = ["pre-commit", "pre-push"]
 
+# Workflow files under .github/workflows/ must be byte-identical to the
+# version on the default branch for GitHub Actions OIDC token exchange to
+# succeed (see claude-review action). Exclude them from formatting hooks.
 [[repos]]
 repo = "builtin"
 hooks = [
-  { id = "trailing-whitespace" },
-  { id = "end-of-file-fixer" },
-  { id = "mixed-line-ending" },
+  { id = "trailing-whitespace", exclude = "^\\.github/workflows/" },
+  { id = "end-of-file-fixer", exclude = "^\\.github/workflows/" },
+  { id = "mixed-line-ending", exclude = "^\\.github/workflows/" },
   { id = "check-toml" },
   { id = "check-yaml" },
   { id = "check-merge-conflict" },
