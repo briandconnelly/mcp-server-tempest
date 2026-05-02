@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-02
+
+### Breaking
+
+- Renamed tool `get_station_id` to `get_station_details`. Update any client
+  code or prompts that called the old name.
+- Removed `use_cache` parameter from `get_stations`, `get_station_details`,
+  `get_observation`, and `get_forecast`. Caching follows
+  `WEATHERFLOW_CACHE_TTL` only.
+- Removed `clear_cache` tool. Restart the server or wait for the TTL to
+  evict entries.
+- Removed `weather://tempest/...` resources. Use the equivalent tools
+  (`get_stations`, `get_station_details`, `get_observation`,
+  `get_forecast`).
+
+### Changed
+
+- Rewrote the server `instructions` block and per-tool descriptions for
+  clearer agent discovery and tool selection. Behavior is unchanged.
+
 ## [0.3.1] - 2026-03-28
 
 ### Added
