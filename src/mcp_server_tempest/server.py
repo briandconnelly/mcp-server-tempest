@@ -209,9 +209,10 @@ Setup: requires WEATHERFLOW_API_TOKEN
 
 def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
     if not (token := os.getenv(env_var)):
-        raise ToolError(
-            f"WeatherFlow API token not configured. Please set the {env_var} environment variable. "
-            f"You can get an API token from https://tempestwx.com/settings/tokens"
+        raise WeatherFlowError(
+            code=ErrorCode.AUTH_MISSING,
+            message=f"{env_var} is not configured.",
+            hint=(f"Set {env_var}. Generate a token at https://tempestwx.com/settings/tokens"),
         )
     return token
 

@@ -249,13 +249,17 @@ class TestGetApiToken:
 
     def test_raises_when_not_set(self):
         with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ToolError, match="not configured"):
+            with pytest.raises(WeatherFlowError) as excinfo:
                 _get_api_token()
+            assert excinfo.value.code is ErrorCode.AUTH_MISSING
+            assert "WEATHERFLOW_API_TOKEN" in excinfo.value.message
+            assert "tempestwx.com/settings/tokens" in excinfo.value.hint
 
     def test_raises_when_empty(self):
         with patch.dict(os.environ, {"WEATHERFLOW_API_TOKEN": ""}):
-            with pytest.raises(ToolError, match="not configured"):
+            with pytest.raises(WeatherFlowError) as excinfo:
                 _get_api_token()
+            assert excinfo.value.code is ErrorCode.AUTH_MISSING
 
     def test_custom_env_var(self):
         with patch.dict(os.environ, {"MY_TOKEN": "custom-token"}):
