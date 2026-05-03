@@ -137,6 +137,8 @@ print(f"🌧️  Precipitation: {current['precip_accum_local_day']} {units['unit
 ### Weather Forecast
 
 ```python
+from datetime import datetime
+
 # Get forecast
 forecast = await client.call_tool("get_forecast", {"station_id": station_id})
 

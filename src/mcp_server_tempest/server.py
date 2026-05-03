@@ -153,9 +153,10 @@ NOTES:
 - get_forecast also returns a current snapshot — but prefer get_observation
   for current-only questions (lighter response).
 - get_forecast accepts hours (1-48) and days (1-10), but the default summary
-  response is capped to 6 hourly / 2 daily entries regardless of those
-  values. Pass detailed=True to use the full hours/days ranges (and to get
-  raw/full sensor data) — it returns a much larger response.
+  response is capped to at most 6 hourly / 2 daily entries — smaller hours/
+  days values are still honored. Pass detailed=True to use the full hours/
+  days ranges (and to get raw/full sensor data) — it returns a much larger
+  response.
 
 TYPICAL WORKFLOW:
 1. If you don't already have a station_id, call get_stations first.
