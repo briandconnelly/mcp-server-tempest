@@ -223,14 +223,30 @@ NOTES:
   days ranges (and to get raw/full sensor data) — it returns a much larger
   response.
 
+AMBIENT STATE (env vars and side state the server reads):
+- WEATHERFLOW_CACHE_TTL — in-memory TTL in seconds (default 300).
+- WEATHERFLOW_CACHE_SIZE — max in-memory entries (default 100).
+- WEATHERFLOW_DISK_CACHE_TTL — disk cache TTL in seconds (default 86400).
+- Disk cache: per-token subdirectory (hash-keyed for account isolation)
+  under platformdirs user_cache_dir("mcp-server-tempest"). Survives
+  restarts.
+- Cache scope: WEATHERFLOW_CACHE_TTL / WEATHERFLOW_CACHE_SIZE govern an
+  in-memory cache used by all four tools. Disk cache
+  (WEATHERFLOW_DISK_CACHE_TTL) applies only to get_stations and
+  get_station_details. To clear: restart for in-memory; delete the cache
+  directory above for disk.
+
 TYPICAL WORKFLOW:
 1. If you don't already have a station_id, call get_stations first.
    Station ids are not guessable — don't fabricate one.
 2. Then get_observation(station_id) or get_forecast(station_id).
    If get_stations returned one station, use it without asking.
 
-Setup: requires WEATHERFLOW_API_TOKEN
-(https://tempestwx.com/settings/tokens).
+SETUP (required):
+- WEATHERFLOW_API_TOKEN — get one at https://tempestwx.com/settings/tokens.
+
+TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (used by
+`uvx` and the README config) calls `mcp.run()` with the stdio default.
 """,
     lifespan=lifespan,
     on_duplicate="error",
