@@ -22,8 +22,9 @@ Environment Variables:
     WEATHERFLOW_CACHE_TTL: In-memory cache TTL in seconds (default: 300)
     WEATHERFLOW_CACHE_SIZE: Maximum in-memory cache entries (default: 100)
     WEATHERFLOW_DISK_CACHE_TTL: Disk cache TTL in seconds (default: 86400).
-        Per-token JSON files under platformdirs.user_cache_dir(
-        "mcp-server-tempest"). Used by get_stations and get_station_details.
+        Per-token JSON files under
+        platformdirs.user_cache_dir("mcp-server-tempest").
+        Used by get_stations and get_station_details.
 
 Example Usage:
     # Get available stations
@@ -231,7 +232,7 @@ AMBIENT STATE (env vars and side state the server reads):
 - WEATHERFLOW_CACHE_SIZE — max in-memory entries (default 100).
 - WEATHERFLOW_DISK_CACHE_TTL — disk cache TTL in seconds (default 86400).
 - Disk cache: per-token subdirectory (hash-keyed for account isolation)
-  under platformdirs user_cache_dir("mcp-server-tempest"). Survives
+  under platformdirs.user_cache_dir("mcp-server-tempest"). Survives
   restarts.
 - Cache scope: WEATHERFLOW_CACHE_TTL / WEATHERFLOW_CACHE_SIZE govern an
   in-memory cache used by all four tools. Disk cache

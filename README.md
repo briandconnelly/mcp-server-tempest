@@ -53,8 +53,8 @@ Just add an additional `--from` argument:
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
 | `WEATHERFLOW_API_TOKEN` | Your WeatherFlow API token | - | ✅ Yes |
-| `WEATHERFLOW_CACHE_TTL` | Cache timeout in seconds | 300 | No |
-| `WEATHERFLOW_CACHE_SIZE` | Maximum cache entries | 100 | No |
+| `WEATHERFLOW_CACHE_TTL` | In-memory cache TTL in seconds | 300 | No |
+| `WEATHERFLOW_CACHE_SIZE` | Maximum in-memory cache entries | 100 | No |
 | `WEATHERFLOW_DISK_CACHE_TTL` | Disk cache TTL in seconds | 86400 | No |
 
 ### Caching & data freshness
