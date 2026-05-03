@@ -54,8 +54,9 @@ class TestApiGetStationId:
         mock_api.async_get_station = AsyncMock(return_value=[])
 
         with patch("mcp_server_tempest.rest.WeatherFlowRestAPI", return_value=mock_api):
-            with pytest.raises(ValueError, match="No station found"):
+            with pytest.raises(WeatherFlowError) as excinfo:
                 await api_get_station_id(99999, "fake-token")
+            assert excinfo.value.code is ErrorCode.STATION_NOT_FOUND
 
 
 class TestApiGetForecast:
@@ -258,3 +259,67 @@ class TestApiGetStationsErrorMapping:
             with pytest.raises(WeatherFlowError) as excinfo:
                 await api_get_stations("fake-token")
             assert excinfo.value.code is ErrorCode.AUTH_MISSING
+
+
+class TestApiGetStationIdErrorMapping:
+    async def test_404_includes_station_id_value(self):
+        async def boom(self, station_id):
+            raise _make_response_error(404)
+
+        with patch(
+            "weatherflow4py.api.WeatherFlowRestAPI.async_get_station",
+            new=boom,
+        ):
+            with pytest.raises(WeatherFlowError) as excinfo:
+                await api_get_station_id(99999, "fake-token")
+            wfe = excinfo.value
+            assert wfe.code is ErrorCode.STATION_NOT_FOUND
+            assert wfe.field_name == "station_id"
+            assert wfe.value == 99999
+
+    async def test_empty_list_is_station_not_found(self):
+        async def empty(self, station_id):
+            return []
+
+        with patch(
+            "weatherflow4py.api.WeatherFlowRestAPI.async_get_station",
+            new=empty,
+        ):
+            with pytest.raises(WeatherFlowError) as excinfo:
+                await api_get_station_id(99999, "fake-token")
+            wfe = excinfo.value
+            assert wfe.code is ErrorCode.STATION_NOT_FOUND
+            assert wfe.field_name == "station_id"
+            assert wfe.value == 99999
+            assert "upstream_status" not in wfe.details
+            assert wfe.details.get("operation") == "station"
+
+
+class TestApiGetForecastErrorMapping:
+    async def test_403_recommends_get_stations(self):
+        async def boom(self, station_id):
+            raise _make_response_error(403)
+
+        with patch(
+            "weatherflow4py.api.WeatherFlowRestAPI.async_get_forecast",
+            new=boom,
+        ):
+            with pytest.raises(WeatherFlowError) as excinfo:
+                await api_get_forecast(12345, "fake-token")
+            assert excinfo.value.code is ErrorCode.AUTH_FORBIDDEN
+            assert excinfo.value.next == {"tool": "get_stations"}
+
+
+class TestApiGetObservationErrorMapping:
+    async def test_429_carries_retry_after(self):
+        async def boom(self, station_id):
+            raise _make_response_error(429, headers={"Retry-After": "10"})
+
+        with patch(
+            "weatherflow4py.api.WeatherFlowRestAPI.async_get_observation",
+            new=boom,
+        ):
+            with pytest.raises(WeatherFlowError) as excinfo:
+                await api_get_observation(12345, "fake-token")
+            assert excinfo.value.code is ErrorCode.RATE_LIMITED
+            assert excinfo.value.retry_after_ms == 10_000

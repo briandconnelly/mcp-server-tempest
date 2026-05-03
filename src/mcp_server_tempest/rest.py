@@ -36,6 +36,10 @@ _STATION_SCOPED: frozenset[str] = frozenset({"station", "forecast", "observation
 
 Operation = Literal["stations", "station", "forecast", "observation"]
 
+# URL repeated in every wrapper's parse-failure hint; lift to a constant so
+# the repo move doesn't require touching four call sites.
+_ISSUES_URL = "https://github.com/briandconnelly/mcp-server-tempest/issues"
+
 
 def _translate_response_error(
     e: aiohttp.ClientResponseError,
@@ -137,29 +141,92 @@ async def api_get_stations(token: str) -> dict:
         raise WeatherFlowError(
             code=ErrorCode.UPSTREAM_INVALID_RESPONSE,
             message="Failed to parse WeatherFlow API response.",
-            hint=(
-                "Report at https://github.com/briandconnelly/mcp-server-tempest/issues"
-                " if persistent."
-            ),
+            hint=f"Report at {_ISSUES_URL} if persistent.",
             details={"operation": "stations", "exception_type": type(exc).__name__},
         ) from exc
 
 
 async def api_get_station_id(station_id: int, token: str) -> dict:
-    async with WeatherFlowRestAPI(token) as api:
-        station = await api.async_get_station(station_id=station_id)
-        if not station:
-            raise ValueError(f"No station found with ID {station_id}")
-        return station[0].to_dict()
+    try:
+        async with WeatherFlowRestAPI(token) as api:
+            station = await api.async_get_station(station_id=station_id)
+            if not station:
+                raise WeatherFlowError(
+                    code=ErrorCode.STATION_NOT_FOUND,
+                    message="Station not found.",
+                    hint="Call get_stations to list valid station_ids.",
+                    field_name="station_id",
+                    value=station_id,
+                    next={"tool": "get_stations"},
+                    # No upstream_status — the API returned 200 with an empty list.
+                    details={"operation": "station"},
+                )
+            return station[0].to_dict()
+    except aiohttp.ClientResponseError as e:
+        raise _translate_response_error(e, operation="station", station_id=station_id) from e
+    except aiohttp.ClientError as e:
+        raise WeatherFlowError(
+            code=ErrorCode.UPSTREAM_UNAVAILABLE,
+            message="Could not reach WeatherFlow API.",
+            hint="Check network connectivity; retry.",
+            details={"operation": "station"},
+        ) from e
+    except WeatherFlowError:
+        raise
+    except Exception as exc:
+        raise WeatherFlowError(
+            code=ErrorCode.UPSTREAM_INVALID_RESPONSE,
+            message="Failed to parse WeatherFlow API response.",
+            hint=f"Report at {_ISSUES_URL} if persistent.",
+            details={"operation": "station", "exception_type": type(exc).__name__},
+        ) from exc
 
 
 async def api_get_forecast(station_id: int, token: str) -> dict:
-    async with WeatherFlowRestAPI(token) as api:
-        forecast = await api.async_get_forecast(station_id=station_id)
-        return forecast.to_dict()
+    try:
+        async with WeatherFlowRestAPI(token) as api:
+            forecast = await api.async_get_forecast(station_id=station_id)
+            return forecast.to_dict()
+    except aiohttp.ClientResponseError as e:
+        raise _translate_response_error(e, operation="forecast", station_id=station_id) from e
+    except aiohttp.ClientError as e:
+        raise WeatherFlowError(
+            code=ErrorCode.UPSTREAM_UNAVAILABLE,
+            message="Could not reach WeatherFlow API.",
+            hint="Check network connectivity; retry.",
+            details={"operation": "forecast"},
+        ) from e
+    except WeatherFlowError:
+        raise
+    except Exception as exc:
+        raise WeatherFlowError(
+            code=ErrorCode.UPSTREAM_INVALID_RESPONSE,
+            message="Failed to parse WeatherFlow API response.",
+            hint=f"Report at {_ISSUES_URL} if persistent.",
+            details={"operation": "forecast", "exception_type": type(exc).__name__},
+        ) from exc
 
 
 async def api_get_observation(station_id: int, token: str) -> dict:
-    async with WeatherFlowRestAPI(token) as api:
-        observation = await api.async_get_observation(station_id=station_id)
-        return observation.to_dict()
+    try:
+        async with WeatherFlowRestAPI(token) as api:
+            observation = await api.async_get_observation(station_id=station_id)
+            return observation.to_dict()
+    except aiohttp.ClientResponseError as e:
+        raise _translate_response_error(e, operation="observation", station_id=station_id) from e
+    except aiohttp.ClientError as e:
+        raise WeatherFlowError(
+            code=ErrorCode.UPSTREAM_UNAVAILABLE,
+            message="Could not reach WeatherFlow API.",
+            hint="Check network connectivity; retry.",
+            details={"operation": "observation"},
+        ) from e
+    except WeatherFlowError:
+        raise
+    except Exception as exc:
+        raise WeatherFlowError(
+            code=ErrorCode.UPSTREAM_INVALID_RESPONSE,
+            message="Failed to parse WeatherFlow API response.",
+            hint=f"Report at {_ISSUES_URL} if persistent.",
+            details={"operation": "observation", "exception_type": type(exc).__name__},
+        ) from exc
