@@ -1,11 +1,23 @@
+import json
 import math
 from collections.abc import Mapping
 from typing import Literal
 
 import aiohttp
+from marshmallow.exceptions import MarshmallowError
 from weatherflow4py.api import WeatherFlowRestAPI
 
 from .errors import ErrorCode, WeatherFlowError
+
+# Parse-failure exception types from `weatherflow4py.api._make_request()`'s
+# `response_model.from_json(data)` step. We catch a narrow set so genuine
+# server-side defects (KeyError, AttributeError, etc.) propagate to
+# `_dispatch`'s internal_error boundary instead of getting misclassified as
+# upstream_invalid_response. Add new types here only if observed in production.
+_PARSE_FAILURE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    MarshmallowError,
+    json.JSONDecodeError,
+)
 
 
 def _retry_after_ms(headers: Mapping[str, str] | None) -> int | None:
@@ -133,11 +145,9 @@ async def api_get_stations(token: str) -> dict:
     except WeatherFlowError:
         # Don't wrap our own typed errors — they already carry codes.
         raise
-    except Exception as exc:
-        # weatherflow4py.api._make_request() re-raises arbitrary exceptions
-        # from response_model.from_json(data) — marshmallow.ValidationError,
-        # JSON decode errors, etc. Treat any non-aiohttp escape as a parse
-        # failure so the agent gets a structured upstream_invalid_response.
+    except _PARSE_FAILURE_EXCEPTIONS as exc:
+        # See _PARSE_FAILURE_EXCEPTIONS at top of module. Genuine server-side
+        # defects propagate to _dispatch's internal_error boundary instead.
         raise WeatherFlowError(
             code=ErrorCode.UPSTREAM_INVALID_RESPONSE,
             message="Failed to parse WeatherFlow API response.",
@@ -173,7 +183,7 @@ async def api_get_station_id(station_id: int, token: str) -> dict:
         ) from e
     except WeatherFlowError:
         raise
-    except Exception as exc:
+    except _PARSE_FAILURE_EXCEPTIONS as exc:
         raise WeatherFlowError(
             code=ErrorCode.UPSTREAM_INVALID_RESPONSE,
             message="Failed to parse WeatherFlow API response.",
@@ -198,7 +208,7 @@ async def api_get_forecast(station_id: int, token: str) -> dict:
         ) from e
     except WeatherFlowError:
         raise
-    except Exception as exc:
+    except _PARSE_FAILURE_EXCEPTIONS as exc:
         raise WeatherFlowError(
             code=ErrorCode.UPSTREAM_INVALID_RESPONSE,
             message="Failed to parse WeatherFlow API response.",
@@ -223,7 +233,7 @@ async def api_get_observation(station_id: int, token: str) -> dict:
         ) from e
     except WeatherFlowError:
         raise
-    except Exception as exc:
+    except _PARSE_FAILURE_EXCEPTIONS as exc:
         raise WeatherFlowError(
             code=ErrorCode.UPSTREAM_INVALID_RESPONSE,
             message="Failed to parse WeatherFlow API response.",

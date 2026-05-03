@@ -1,5 +1,6 @@
 """Tests for REST API wrapper functions."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -240,9 +241,11 @@ class TestApiGetStationsErrorMapping:
                 await api_get_stations("fake-token")
             assert excinfo.value.code is ErrorCode.UPSTREAM_UNAVAILABLE
 
-    async def test_parse_failure_maps_to_invalid_response(self):
+    async def test_marshmallow_validation_error_is_invalid_response(self):
+        from marshmallow import ValidationError
+
         async def boom(self):
-            raise ValueError("malformed payload")
+            raise ValidationError("bad field")
 
         with patch(
             "weatherflow4py.api.WeatherFlowRestAPI.async_get_stations",
@@ -251,7 +254,36 @@ class TestApiGetStationsErrorMapping:
             with pytest.raises(WeatherFlowError) as excinfo:
                 await api_get_stations("fake-token")
             assert excinfo.value.code is ErrorCode.UPSTREAM_INVALID_RESPONSE
-            assert excinfo.value.details["exception_type"] == "ValueError"
+            assert excinfo.value.details["exception_type"] == "ValidationError"
+
+    async def test_json_decode_error_is_invalid_response(self):
+        async def boom(self):
+            raise json.JSONDecodeError("Expecting value", "", 0)
+
+        with patch(
+            "weatherflow4py.api.WeatherFlowRestAPI.async_get_stations",
+            new=boom,
+        ):
+            with pytest.raises(WeatherFlowError) as excinfo:
+                await api_get_stations("fake-token")
+            assert excinfo.value.code is ErrorCode.UPSTREAM_INVALID_RESPONSE
+            assert excinfo.value.details["exception_type"] == "JSONDecodeError"
+
+    async def test_unrelated_exception_propagates_to_dispatch(self):
+        # Not a parse failure — this is a server-side defect (e.g. KeyError
+        # in our own code, or AttributeError from a refactor). The wrapper
+        # MUST NOT silently re-label it as upstream_invalid_response; let
+        # it propagate so _dispatch's internal_error boundary catches it.
+        async def boom(self):
+            raise KeyError("internal lookup failed")
+
+        with patch(
+            "weatherflow4py.api.WeatherFlowRestAPI.async_get_stations",
+            new=boom,
+        ):
+            # Plain KeyError, NOT WeatherFlowError. Reaches _dispatch as bare.
+            with pytest.raises(KeyError):
+                await api_get_stations("fake-token")
 
     async def test_weatherflow_error_passes_through(self):
         async def boom(self):
