@@ -67,9 +67,9 @@ Get a list of all your weather stations and connected devices.
 ```python
 # Get all available stations
 stations = await client.call_tool("get_stations")
-for station in stations.stations:
-    print(f"Station: {station.name} (ID: {station.station_id})")
-    print(f"Location: {station.latitude}, {station.longitude}")
+for station in stations["stations"]:
+    print(f"Station: {station['name']} (ID: {station['station_id']})")
+    print(f"Location: {station['latitude']}, {station['longitude']}")
 ```
 
 #### `get_observation(station_id)`
@@ -78,10 +78,10 @@ Get current weather conditions for a specific station.
 ```python
 # Get current conditions
 obs = await client.call_tool("get_observation", {"station_id": 12345})
-current = obs.obs[0]
-print(f"Temperature: {current.air_temperature}°")
-print(f"Humidity: {current.relative_humidity}%")
-print(f"Wind: {current.wind_avg} {obs.station_units.units_wind}")
+current = obs["obs"][0]
+print(f"Temperature: {current['air_temperature']}°")
+print(f"Humidity: {current['relative_humidity']}%")
+print(f"Wind: {current['wind_avg']} {obs['station_units']['units_wind']}")
 ```
 
 #### `get_forecast(station_id)`
@@ -92,14 +92,14 @@ Get weather forecast and current conditions.
 forecast = await client.call_tool("get_forecast", {"station_id": 12345})
 
 # Current conditions
-current = forecast.current_conditions
-print(f"Current: {current.air_temperature}°")
-print(f"Conditions: {current.conditions}")
+current = forecast["current_conditions"]
+print(f"Current: {current['air_temperature']}°")
+print(f"Conditions: {current['conditions']}")
 
 # Today's forecast
-today = forecast.forecast.daily[0]
-print(f"High/Low: {today.air_temp_high}°/{today.air_temp_low}°")
-print(f"Rain chance: {today.precip_probability}%")
+today = forecast["forecast"]["daily"][0]
+print(f"High/Low: {today['air_temp_high']}°/{today['air_temp_low']}°")
+print(f"Rain chance: {today['precip_probability']}%")
 ```
 
 #### `get_station_details(station_id)`
@@ -108,9 +108,9 @@ Get detailed information about a specific station.
 ```python
 # Get station details
 station = await client.call_tool("get_station_details", {"station_id": 12345})
-print(f"Station: {station.name}")
-print(f"Elevation: {station.station_meta.elevation}m")
-print(f"Devices: {len(station.devices)}")
+print(f"Station: {station['name']}")
+print(f"Elevation: {station['station_meta']['elevation']}m")
+print(f"Devices: {len(station['devices'])}")
 ```
 
 
@@ -121,34 +121,37 @@ print(f"Devices: {len(station.devices)}")
 ```python
 # Get your stations
 stations = await client.call_tool("get_stations")
-station_id = stations.stations[0].station_id
+station_id = stations["stations"][0]["station_id"]
 
 # Get current conditions
 obs = await client.call_tool("get_observation", {"station_id": station_id})
-current = obs.obs[0]
+current = obs["obs"][0]
+units = obs["station_units"]
 
-print(f"🌡️  Temperature: {current.air_temperature}°{obs.station_units.units_temp}")
-print(f"💧 Humidity: {current.relative_humidity}%")
-print(f"💨 Wind: {current.wind_avg} {obs.station_units.units_wind}")
-print(f"🌧️  Precipitation: {current.precip_accum_local_day} {obs.station_units.units_precip}")
+print(f"🌡️  Temperature: {current['air_temperature']}°{units['units_temp']}")
+print(f"💧 Humidity: {current['relative_humidity']}%")
+print(f"💨 Wind: {current['wind_avg']} {units['units_wind']}")
+print(f"🌧️  Precipitation: {current['precip_accum_local_day']} {units['units_precip']}")
 ```
 
 ### Weather Forecast
 
 ```python
+from datetime import datetime
+
 # Get forecast
 forecast = await client.call_tool("get_forecast", {"station_id": station_id})
 
 # Today's weather
-today = forecast.forecast.daily[0]
-print(f"📅 Today: {today.conditions}")
-print(f"🌡️  High: {today.air_temp_high}° / Low: {today.air_temp_low}°")
-print(f"🌧️  Rain chance: {today.precip_probability}%")
+today = forecast["forecast"]["daily"][0]
+print(f"📅 Today: {today['conditions']}")
+print(f"🌡️  High: {today['air_temp_high']}° / Low: {today['air_temp_low']}°")
+print(f"🌧️  Rain chance: {today['precip_probability']}%")
 
 # Next few hours
-for hour in forecast.forecast.hourly[:6]:
-    time = datetime.fromtimestamp(hour.time)
-    print(f"🕐 {time.strftime('%H:%M')}: {hour.air_temperature}° - {hour.conditions}")
+for hour in forecast["forecast"]["hourly"][:6]:
+    time = datetime.fromtimestamp(hour["time"])
+    print(f"🕐 {time.strftime('%H:%M')}: {hour['air_temperature']}° - {hour['conditions']}")
 ```
 
 ### Station Information
@@ -157,16 +160,16 @@ for hour in forecast.forecast.hourly[:6]:
 # Get station details
 station = await client.call_tool("get_station_details", {"station_id": station_id})
 
-print(f"🏠 Station: {station.name}")
-print(f"📍 Location: {station.latitude}°, {station.longitude}°")
-print(f"⛰️  Elevation: {station.station_meta.elevation}m")
-print(f"🕐 Timezone: {station.timezone}")
+print(f"🏠 Station: {station['name']}")
+print(f"📍 Location: {station['latitude']}°, {station['longitude']}°")
+print(f"⛰️  Elevation: {station['station_meta']['elevation']}m")
+print(f"🕐 Timezone: {station['timezone']}")
 
 # Check device status
-for device in station.devices:
-    if device.serial_number:
-        status = "🟢 Online" if device.device_meta else "🔴 Offline"
-        print(f"📡 {device.device_type}: {status}")
+for device in station["devices"]:
+    if device.get("serial_number"):
+        status = "🟢 Online" if device.get("device_meta") else "🔴 Offline"
+        print(f"📡 {device['device_type']}: {status}")
 ```
 
 

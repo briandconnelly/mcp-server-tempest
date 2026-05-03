@@ -933,6 +933,45 @@ class TestServerInstructions:
             assert marker in text, f"{marker!r} missing from instructions"
 
 
+# -- Tests for the public MCP tool/resource registry --
+
+
+class TestMcpRegistry:
+    """Regression guards on the actual MCP surface (tools + resources).
+
+    The instructions string can drift away from what's really registered, so
+    these tests assert against the live registry to catch reintroductions of
+    removed surfaces (e.g. clear_cache) or accidental renames.
+    """
+
+    EXPECTED_TOOLS = {
+        "get_stations",
+        "get_station_details",
+        "get_forecast",
+        "get_observation",
+    }
+
+    REMOVED_TOOLS = {
+        "get_station_id",
+        "clear_cache",
+    }
+
+    async def test_registered_tools_match_expected(self):
+        names = {t.name for t in await mcp.list_tools()}
+        assert names == self.EXPECTED_TOOLS
+
+    async def test_removed_tools_not_registered(self):
+        names = {t.name for t in await mcp.list_tools()}
+        leaked = self.REMOVED_TOOLS & names
+        assert not leaked, f"removed tools reintroduced: {leaked}"
+
+    async def test_no_resources_registered(self):
+        # The 0.4.0 release dropped the public weather://tempest/... resources;
+        # they should not come back without an explicit decision.
+        assert await mcp.list_resources() == []
+        assert await mcp.list_resource_templates() == []
+
+
 # -- Tests for _int_env --
 
 
