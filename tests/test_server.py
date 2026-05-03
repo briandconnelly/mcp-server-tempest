@@ -944,10 +944,35 @@ class TestServerInstructions:
         ):
             assert tool_name in text, f"{tool_name} missing from instructions"
 
-    def test_instructions_has_scope_sections(self):
+    def test_instructions_has_section_taxonomy(self):
         text = mcp.instructions
-        for marker in ("USE THIS SERVER", "DO NOT USE", "TOOL SELECTION"):
+        for marker in (
+            "USE THIS SERVER",
+            "DO NOT USE",
+            "TOOL SELECTION",
+            "NOTES",
+            "AMBIENT STATE",
+            "TYPICAL WORKFLOW",
+            "SETUP",
+            "TRANSPORT",
+        ):
             assert marker in text, f"{marker!r} missing from instructions"
+
+    def test_instructions_documents_ambient_state_and_transport(self):
+        text = mcp.instructions
+        # Every env var the server actually reads must appear by name.
+        for env_var in (
+            "WEATHERFLOW_API_TOKEN",
+            "WEATHERFLOW_CACHE_TTL",
+            "WEATHERFLOW_CACHE_SIZE",
+            "WEATHERFLOW_DISK_CACHE_TTL",
+        ):
+            assert env_var in text, f"{env_var!r} missing from instructions"
+        # Disk cache path wording — a refactor that moves the path surfaces here.
+        assert "user_cache_dir" in text
+        assert "mcp-server-tempest" in text
+        # Transport must be named explicitly.
+        assert "stdio" in text
 
 
 # -- Tests for the public MCP tool/resource registry --
