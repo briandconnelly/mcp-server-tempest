@@ -98,3 +98,9 @@ class TestWeatherFlowErrorPayload:
         # Must be raisable and catchable as an Exception
         with pytest.raises(WeatherFlowError):
             raise WeatherFlowError(code=ErrorCode.INTERNAL_ERROR, message="x")
+
+    def test_str_returns_message(self):
+        # __post_init__ must populate Exception.args so str(e) is informative.
+        wfe = WeatherFlowError(code=ErrorCode.AUTH_INVALID, message="bad token")
+        assert str(wfe) == "bad token"
+        assert wfe.args == ("bad token",)

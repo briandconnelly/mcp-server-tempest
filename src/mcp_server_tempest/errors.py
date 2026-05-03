@@ -50,6 +50,11 @@ class WeatherFlowError(Exception):
     retry_after_ms: int | None = None
     details: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        # Populate Exception.args so str(self) and traceback rendering carry
+        # the message — without this, dataclass.__init__ leaves args empty.
+        super().__init__(self.message)
+
     @property
     def temporary(self) -> bool:
         return self.code in _TEMPORARY
