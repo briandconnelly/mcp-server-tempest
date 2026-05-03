@@ -1,5 +1,6 @@
 """Tests for server logic."""
 
+import json
 import os
 from unittest.mock import AsyncMock, patch
 
@@ -8,6 +9,7 @@ from fastmcp.exceptions import ToolError
 
 import mcp_server_tempest.server as server_module
 from mcp_server_tempest.cache import DiskCache
+from mcp_server_tempest.errors import ErrorCode, WeatherFlowError
 from mcp_server_tempest.models import WeatherObservation
 from mcp_server_tempest.server import (
     _FORECAST_SCHEMA,
@@ -1099,3 +1101,77 @@ class TestDiskCacheIntegration:
             result = await _get_station_details_data(12345, mock_ctx, use_cache=True)
             assert result.station_id == 12345
             mock_ctx.info.assert_called_with("Using disk-cached station data for station 12345")
+
+
+# -- Tests for _dispatch helper --
+
+
+class TestDispatch:
+    async def test_passes_through_successful_result(self):
+        from mcp_server_tempest.server import _dispatch
+
+        async def work():
+            return {"ok": True}
+
+        result = await _dispatch(work)
+        assert result == {"ok": True}
+
+    async def test_weatherflow_error_becomes_json_tool_error(self):
+        from mcp_server_tempest.server import _dispatch
+
+        async def work():
+            raise WeatherFlowError(
+                code=ErrorCode.AUTH_INVALID,
+                message="bad token",
+                hint="get a new one",
+            )
+
+        with pytest.raises(ToolError) as excinfo:
+            await _dispatch(work)
+        payload = json.loads(excinfo.value.args[0])
+        assert payload["code"] == "auth_invalid"
+        assert payload["message"] == "bad token"
+        assert payload["hint"] == "get a new one"
+        assert payload["temporary"] is False
+        assert isinstance(payload["request_id"], str)
+        assert len(payload["request_id"]) == 16  # secrets.token_hex(8)
+
+    async def test_unexpected_exception_becomes_internal_error(self):
+        from mcp_server_tempest.server import _dispatch
+
+        async def work():
+            raise ValueError("kaboom")
+
+        with pytest.raises(ToolError) as excinfo:
+            await _dispatch(work)
+        payload = json.loads(excinfo.value.args[0])
+        assert payload["code"] == "internal_error"
+        # Original exception text MUST NOT leak into the message or hint
+        assert "kaboom" not in payload["message"]
+        assert "kaboom" not in payload.get("hint", "")
+        # request_id appears in the hint so users can correlate logs
+        assert payload["request_id"] in payload["hint"]
+
+    async def test_pre_structured_tool_error_passes_through(self):
+        from mcp_server_tempest.server import _dispatch
+
+        async def work():
+            raise ToolError("already structured")
+
+        with pytest.raises(ToolError, match="already structured"):
+            await _dispatch(work)
+
+    async def test_distinct_request_ids(self):
+        from mcp_server_tempest.server import _dispatch
+
+        rids = []
+        for _ in range(5):
+
+            async def work():
+                raise WeatherFlowError(code=ErrorCode.AUTH_INVALID, message="x")
+
+            try:
+                await _dispatch(work)
+            except ToolError as te:
+                rids.append(json.loads(te.args[0])["request_id"])
+        assert len(set(rids)) == 5

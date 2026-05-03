@@ -35,9 +35,11 @@ Example Usage:
 
 import logging
 import os
-from collections.abc import AsyncIterator
+import secrets
+import traceback
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, TypeVar
 
 from cachetools import TTLCache
 from fastmcp import Context, FastMCP
@@ -47,6 +49,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .cache import DiskCache
+from .errors import ErrorCode, WeatherFlowError
 from .models import (
     ForecastResponse,
     ObservationResponse,
@@ -61,6 +64,37 @@ from .rest import (
 )
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+def _new_request_id() -> str:
+    """Per-call correlation id for log/error pairing. 16 hex chars (~64 bits)."""
+    return secrets.token_hex(8)
+
+
+async def _dispatch(work: Callable[[], Awaitable[T]]) -> T:
+    """Run a tool body. Convert WeatherFlowError → structured JSON ToolError;
+    pass through any already-structured ToolError (debug-logged for correlation);
+    convert anything else → internal_error ToolError. Always log with rid.
+    """
+    rid = _new_request_id()
+    try:
+        return await work()
+    except WeatherFlowError as wfe:
+        logger.warning("rid=%s code=%s msg=%s", rid, wfe.code.value, wfe.message)
+        raise wfe.to_tool_error(rid) from wfe
+    except ToolError:
+        logger.debug("rid=%s passing through pre-structured ToolError", rid)
+        raise
+    except Exception as exc:
+        logger.error("rid=%s unexpected: %s\n%s", rid, exc, traceback.format_exc())
+        wfe = WeatherFlowError(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Unexpected server error.",
+            hint=f"Check server logs for request_id={rid}.",
+        )
+        raise wfe.to_tool_error(rid) from exc
 
 
 def _int_env(name: str, default: int) -> int:
