@@ -823,6 +823,7 @@ source = { editable = "." }
 dependencies = [
     { name = "cachetools" },
     { name = "fastmcp" },
+    { name = "marshmallow" },
     { name = "platformdirs" },
     { name = "pydantic" },
     { name = "weatherflow4py" },
@@ -842,6 +843,7 @@ dev = [
 requires-dist = [
     { name = "cachetools", specifier = ">=6.1.0" },
     { name = "fastmcp", specifier = ">=3.1" },
+    { name = "marshmallow", specifier = ">=3.0" },
     { name = "platformdirs", specifier = ">=4.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "weatherflow4py", specifier = ">=1.4.1" },

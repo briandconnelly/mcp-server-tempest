@@ -20,6 +20,10 @@ requires-python = ">=3.13"
 dependencies = [
     "cachetools>=6.1.0",
     "fastmcp>=3.1",
+    # marshmallow is the parse-failure exception class we catch in rest.py
+    # (raised by weatherflow4py via dataclasses-json). Declared directly so
+    # we don't depend on the transitive dep surviving an upstream refactor.
+    "marshmallow>=3.0",
     "platformdirs>=4.0",
     "pydantic>=2.11.7",
     "weatherflow4py>=1.4.1",

@@ -33,11 +33,14 @@ Example Usage:
     forecast = await client.call_tool("get_forecast", {"station_id": 12345})
 """
 
+import json
 import logging
 import os
-from collections.abc import AsyncIterator
+import secrets
+import traceback
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, TypeVar
 
 from cachetools import TTLCache
 from fastmcp import Context, FastMCP
@@ -47,6 +50,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .cache import DiskCache
+from .errors import ErrorCode, WeatherFlowError
 from .models import (
     ForecastResponse,
     ObservationResponse,
@@ -61,6 +65,67 @@ from .rest import (
 )
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+def _new_request_id() -> str:
+    """Per-call correlation id for log/error pairing. 16 hex chars (~64 bits)."""
+    return secrets.token_hex(8)
+
+
+_KNOWN_CODES: frozenset[str] = frozenset(c.value for c in ErrorCode)
+
+
+def _is_structured_tool_error(te: ToolError) -> bool:
+    """True iff the ToolError message is a JSON payload with a known code.
+
+    `WeatherFlowError.to_tool_error` produces this exact shape; anything else
+    is unstructured and must not bypass _dispatch's wire-contract enforcement.
+    """
+    if not te.args:
+        return False
+    try:
+        payload = json.loads(te.args[0])
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("code") in _KNOWN_CODES
+
+
+async def _dispatch(work: Callable[[], Awaitable[T]]) -> T:
+    """Run a tool body. Convert WeatherFlowError → structured JSON ToolError;
+    pass through ToolErrors that already carry a structured payload; convert
+    everything else (including unstructured ToolErrors) → internal_error.
+    Always log with rid.
+    """
+    rid = _new_request_id()
+    try:
+        return await work()
+    except WeatherFlowError as wfe:
+        logger.warning("rid=%s code=%s msg=%s", rid, wfe.code.value, wfe.message)
+        raise wfe.to_tool_error(rid) from wfe
+    except ToolError as te:
+        # Pass through ONLY if already structured. Plain ToolError("text") from
+        # a helper or future framework path would otherwise leak as unstructured
+        # text and defeat the wire contract; wrap it as internal_error instead.
+        if _is_structured_tool_error(te):
+            logger.debug("rid=%s passing through pre-structured ToolError", rid)
+            raise
+        logger.error("rid=%s caught unstructured ToolError: %r", rid, te.args)
+        wfe = WeatherFlowError(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Unexpected server error.",
+            hint=f"Check server logs for request_id={rid}.",
+        )
+        raise wfe.to_tool_error(rid) from te
+    except Exception as exc:
+        logger.error("rid=%s unexpected: %s\n%s", rid, exc, traceback.format_exc())
+        wfe = WeatherFlowError(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Unexpected server error.",
+            hint=f"Check server logs for request_id={rid}.",
+        )
+        raise wfe.to_tool_error(rid) from exc
 
 
 def _int_env(name: str, default: int) -> int:
@@ -168,16 +233,16 @@ Setup: requires WEATHERFLOW_API_TOKEN
 (https://tempestwx.com/settings/tokens).
 """,
     lifespan=lifespan,
-    mask_error_details=True,
     on_duplicate="error",
 )
 
 
 def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
     if not (token := os.getenv(env_var)):
-        raise ToolError(
-            f"WeatherFlow API token not configured. Please set the {env_var} environment variable. "
-            f"You can get an API token from https://tempestwx.com/settings/tokens"
+        raise WeatherFlowError(
+            code=ErrorCode.AUTH_MISSING,
+            message=f"{env_var} is not configured.",
+            hint=(f"Set {env_var}. Generate a token at https://tempestwx.com/settings/tokens"),
         )
     return token
 
@@ -477,13 +542,11 @@ async def get_stations(
     devices, and capabilities. Admin/internal fields are excluded.
     """
 
-    try:
+    async def _work() -> dict:
         data = await _get_stations_data(ctx)
         return data.model_dump(exclude=_STATIONS_EXCLUDE)
-    except ToolError:
-        raise
-    except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}") from e
+
+    return await _dispatch(_work)
 
 
 @mcp.tool(
@@ -514,13 +577,12 @@ async def get_station_details(
     Output: detailed station record — devices, sensor capabilities, location,
     metadata. Rarely needed if the user only asked about weather.
     """
-    try:
+
+    async def _work() -> dict:
         data = await _get_station_details_data(station_id, ctx)
         return data.model_dump(exclude=_STATION_EXCLUDE)
-    except ToolError:
-        raise
-    except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}") from e
+
+    return await _dispatch(_work)
 
 
 @mcp.tool(
@@ -589,7 +651,8 @@ async def get_forecast(
     Output: current snapshot + hourly + daily forecasts in the station's
     configured units — read 'units' in the response.
     """
-    try:
+
+    async def _work() -> dict:
         data = await _get_forecast_data(station_id, ctx)
         result = data.model_dump(exclude=_FORECAST_EXCLUDE)
 
@@ -603,10 +666,8 @@ async def get_forecast(
                 result.pop(key, None)
 
         return result
-    except ToolError:
-        raise
-    except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}") from e
+
+    return await _dispatch(_work)
 
 
 @mcp.tool(
@@ -650,22 +711,20 @@ async def get_observation(
     'station_units' in the response.
     """
 
-    try:
+    async def _work() -> dict:
         data = await _get_observation_data(station_id, ctx)
         result = data.model_dump(exclude=_OBSERVATION_EXCLUDE)
 
         if not detailed:
             for obs in result["obs"]:
-                for field in _OBSERVATION_SUMMARY_FIELDS:
-                    obs.pop(field, None)
+                for field_name in _OBSERVATION_SUMMARY_FIELDS:
+                    obs.pop(field_name, None)
             for key in ("latitude", "longitude", "elevation", "is_public"):
                 result.pop(key, None)
 
         return result
-    except ToolError:
-        raise
-    except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}") from e
+
+    return await _dispatch(_work)
 
 
 @mcp.custom_route("/health", methods=["GET"])
