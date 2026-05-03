@@ -1,5 +1,6 @@
 import math
 from collections.abc import Mapping
+from typing import Literal
 
 import aiohttp
 from weatherflow4py.api import WeatherFlowRestAPI
@@ -33,11 +34,13 @@ def _retry_after_ms(headers: Mapping[str, str] | None) -> int | None:
 # Operations that take a station_id and where 404 means "no such station".
 _STATION_SCOPED: frozenset[str] = frozenset({"station", "forecast", "observation"})
 
+Operation = Literal["stations", "station", "forecast", "observation"]
+
 
 def _translate_response_error(
     e: aiohttp.ClientResponseError,
     *,
-    operation: str,
+    operation: Operation,
     station_id: int | None = None,
 ) -> WeatherFlowError:
     """Map an aiohttp HTTP error to a structured WeatherFlowError.
@@ -109,9 +112,37 @@ def _translate_response_error(
 
 
 async def api_get_stations(token: str) -> dict:
-    async with WeatherFlowRestAPI(token) as api:
-        stations = await api.async_get_stations()
-        return stations.to_dict()
+    try:
+        async with WeatherFlowRestAPI(token) as api:
+            stations = await api.async_get_stations()
+            return stations.to_dict()
+    except aiohttp.ClientResponseError as e:
+        raise _translate_response_error(e, operation="stations") from e
+    except aiohttp.ClientError as e:
+        # transport / DNS / timeout
+        raise WeatherFlowError(
+            code=ErrorCode.UPSTREAM_UNAVAILABLE,
+            message="Could not reach WeatherFlow API.",
+            hint="Check network connectivity; retry.",
+            details={"operation": "stations"},
+        ) from e
+    except WeatherFlowError:
+        # Don't wrap our own typed errors — they already carry codes.
+        raise
+    except Exception as exc:
+        # weatherflow4py.api._make_request() re-raises arbitrary exceptions
+        # from response_model.from_json(data) — marshmallow.ValidationError,
+        # JSON decode errors, etc. Treat any non-aiohttp escape as a parse
+        # failure so the agent gets a structured upstream_invalid_response.
+        raise WeatherFlowError(
+            code=ErrorCode.UPSTREAM_INVALID_RESPONSE,
+            message="Failed to parse WeatherFlow API response.",
+            hint=(
+                "Report at https://github.com/briandconnelly/mcp-server-tempest/issues"
+                " if persistent."
+            ),
+            details={"operation": "stations", "exception_type": type(exc).__name__},
+        ) from exc
 
 
 async def api_get_station_id(station_id: int, token: str) -> dict:

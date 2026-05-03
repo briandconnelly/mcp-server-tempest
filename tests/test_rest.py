@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from mcp_server_tempest.errors import ErrorCode
+from mcp_server_tempest.errors import ErrorCode, WeatherFlowError
 from mcp_server_tempest.rest import (
     _STATION_SCOPED,
     _retry_after_ms,
@@ -207,3 +207,54 @@ class TestTranslateResponseError:
 class TestStationScopedSet:
     def test_contains_expected_operations(self):
         assert _STATION_SCOPED == frozenset({"station", "forecast", "observation"})
+
+
+class TestApiGetStationsErrorMapping:
+    async def test_401_maps_to_auth_invalid(self):
+        async def boom(self):
+            raise _make_response_error(401)
+
+        with patch(
+            "weatherflow4py.api.WeatherFlowRestAPI.async_get_stations",
+            new=boom,
+        ):
+            with pytest.raises(WeatherFlowError) as excinfo:
+                await api_get_stations("fake-token")
+            assert excinfo.value.code is ErrorCode.AUTH_INVALID
+
+    async def test_clienterror_maps_to_upstream_unavailable(self):
+        async def boom(self):
+            raise aiohttp.ClientConnectionError("dns down")
+
+        with patch(
+            "weatherflow4py.api.WeatherFlowRestAPI.async_get_stations",
+            new=boom,
+        ):
+            with pytest.raises(WeatherFlowError) as excinfo:
+                await api_get_stations("fake-token")
+            assert excinfo.value.code is ErrorCode.UPSTREAM_UNAVAILABLE
+
+    async def test_parse_failure_maps_to_invalid_response(self):
+        async def boom(self):
+            raise ValueError("malformed payload")
+
+        with patch(
+            "weatherflow4py.api.WeatherFlowRestAPI.async_get_stations",
+            new=boom,
+        ):
+            with pytest.raises(WeatherFlowError) as excinfo:
+                await api_get_stations("fake-token")
+            assert excinfo.value.code is ErrorCode.UPSTREAM_INVALID_RESPONSE
+            assert excinfo.value.details["exception_type"] == "ValueError"
+
+    async def test_weatherflow_error_passes_through(self):
+        async def boom(self):
+            raise WeatherFlowError(code=ErrorCode.AUTH_MISSING, message="ours")
+
+        with patch(
+            "weatherflow4py.api.WeatherFlowRestAPI.async_get_stations",
+            new=boom,
+        ):
+            with pytest.raises(WeatherFlowError) as excinfo:
+                await api_get_stations("fake-token")
+            assert excinfo.value.code is ErrorCode.AUTH_MISSING
