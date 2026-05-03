@@ -2,10 +2,14 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
+from mcp_server_tempest.errors import ErrorCode
 from mcp_server_tempest.rest import (
+    _STATION_SCOPED,
     _retry_after_ms,
+    _translate_response_error,
     api_get_forecast,
     api_get_observation,
     api_get_station_id,
@@ -108,3 +112,98 @@ class TestRetryAfterMs:
 
     def test_nan_value_returns_none(self):
         assert _retry_after_ms({"Retry-After": "nan"}) is None
+
+
+def _make_response_error(status: int, headers: dict[str, str] | None = None):
+    """Build an aiohttp.ClientResponseError with .status and .headers populated."""
+    request_info = MagicMock(spec=aiohttp.RequestInfo)
+    return aiohttp.ClientResponseError(
+        request_info=request_info,
+        history=(),
+        status=status,
+        message=f"HTTP {status}",
+        headers=headers or {},
+    )
+
+
+class TestTranslateResponseError:
+    def test_401_always_auth_invalid(self):
+        e = _make_response_error(401)
+        for op in ("stations", "station", "forecast", "observation"):
+            wfe = _translate_response_error(e, operation=op)
+            assert wfe.code is ErrorCode.AUTH_INVALID
+            assert "tempestwx.com/settings/tokens" in wfe.hint
+            assert wfe.details["upstream_status"] == 401
+            assert wfe.details["operation"] == op
+            assert wfe.next is None
+
+    def test_403_station_scoped_recommends_get_stations(self):
+        e = _make_response_error(403)
+        for op in _STATION_SCOPED:
+            wfe = _translate_response_error(e, operation=op)
+            assert wfe.code is ErrorCode.AUTH_FORBIDDEN
+            assert wfe.next == {"tool": "get_stations"}
+            assert "station" in wfe.message.lower()
+
+    def test_403_stations_op_no_next(self):
+        e = _make_response_error(403)
+        wfe = _translate_response_error(e, operation="stations")
+        assert wfe.code is ErrorCode.AUTH_FORBIDDEN
+        assert wfe.next is None
+        assert "scope" in wfe.hint.lower()
+
+    def test_404_station_scoped_is_station_not_found(self):
+        e = _make_response_error(404)
+        for op in _STATION_SCOPED:
+            wfe = _translate_response_error(e, operation=op, station_id=12345)
+            assert wfe.code is ErrorCode.STATION_NOT_FOUND
+            assert wfe.field_name == "station_id"
+            assert wfe.value == 12345
+            assert wfe.next == {"tool": "get_stations"}
+
+    def test_404_stations_op_is_invalid_response(self):
+        # 404 on the /stations endpoint isn't "no such station" — it's an
+        # unexpected upstream answer.
+        e = _make_response_error(404)
+        wfe = _translate_response_error(e, operation="stations")
+        assert wfe.code is ErrorCode.UPSTREAM_INVALID_RESPONSE
+        assert wfe.field_name is None
+
+    def test_404_station_scoped_without_station_id_omits_value(self):
+        # If a station-scoped op forgot to thread station_id, value stays absent
+        e = _make_response_error(404)
+        wfe = _translate_response_error(e, operation="observation")
+        assert wfe.code is ErrorCode.STATION_NOT_FOUND
+        assert wfe.value is None
+
+    def test_429_rate_limited_with_retry_after(self):
+        e = _make_response_error(429, headers={"Retry-After": "30"})
+        wfe = _translate_response_error(e, operation="observation")
+        assert wfe.code is ErrorCode.RATE_LIMITED
+        assert wfe.retry_after_ms == 30_000
+        assert wfe.temporary is True
+
+    def test_429_without_retry_after_header(self):
+        e = _make_response_error(429)
+        wfe = _translate_response_error(e, operation="observation")
+        assert wfe.code is ErrorCode.RATE_LIMITED
+        assert wfe.retry_after_ms is None
+
+    @pytest.mark.parametrize("status", [500, 502, 503, 504])
+    def test_5xx_upstream_unavailable(self, status):
+        e = _make_response_error(status)
+        wfe = _translate_response_error(e, operation="forecast")
+        assert wfe.code is ErrorCode.UPSTREAM_UNAVAILABLE
+        assert wfe.temporary is True
+        assert wfe.details["upstream_status"] == status
+
+    def test_unexpected_4xx_is_invalid_response(self):
+        e = _make_response_error(418)  # I'm a teapot
+        wfe = _translate_response_error(e, operation="observation")
+        assert wfe.code is ErrorCode.UPSTREAM_INVALID_RESPONSE
+        assert wfe.details["upstream_status"] == 418
+
+
+class TestStationScopedSet:
+    def test_contains_expected_operations(self):
+        assert _STATION_SCOPED == frozenset({"station", "forecast", "observation"})

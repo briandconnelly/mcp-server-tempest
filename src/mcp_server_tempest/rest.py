@@ -1,7 +1,10 @@
 import math
 from collections.abc import Mapping
 
+import aiohttp
 from weatherflow4py.api import WeatherFlowRestAPI
+
+from .errors import ErrorCode, WeatherFlowError
 
 
 def _retry_after_ms(headers: Mapping[str, str] | None) -> int | None:
@@ -25,6 +28,84 @@ def _retry_after_ms(headers: Mapping[str, str] | None) -> int | None:
     if not math.isfinite(seconds) or seconds < 0:
         return None
     return int(seconds * 1000)
+
+
+# Operations that take a station_id and where 404 means "no such station".
+_STATION_SCOPED: frozenset[str] = frozenset({"station", "forecast", "observation"})
+
+
+def _translate_response_error(
+    e: aiohttp.ClientResponseError,
+    *,
+    operation: str,
+    station_id: int | None = None,
+) -> WeatherFlowError:
+    """Map an aiohttp HTTP error to a structured WeatherFlowError.
+
+    `operation` is the canonical name of the WeatherFlow REST endpoint
+    being called (`"stations"`, `"station"`, `"forecast"`, `"observation"`)
+    and is used to vary 403/404 hints. `station_id` is threaded by
+    station-scoped wrappers so the 404 branch can populate `value`.
+    """
+    status = e.status
+    if status == 401:
+        return WeatherFlowError(
+            code=ErrorCode.AUTH_INVALID,
+            message="WeatherFlow rejected the API token.",
+            hint="Generate a new token at https://tempestwx.com/settings/tokens",
+            details={"upstream_status": 401, "operation": operation},
+        )
+    if status == 403:
+        if operation in _STATION_SCOPED:
+            return WeatherFlowError(
+                code=ErrorCode.AUTH_FORBIDDEN,
+                message="Token does not have access to this station.",
+                hint="Verify station ownership.",
+                next={"tool": "get_stations"},
+                details={"upstream_status": 403, "operation": operation},
+            )
+        return WeatherFlowError(
+            code=ErrorCode.AUTH_FORBIDDEN,
+            message="Token does not have access to this resource.",
+            hint="Verify token scope.",
+            details={"upstream_status": 403, "operation": operation},
+        )
+    if status == 404:
+        if operation in _STATION_SCOPED:
+            return WeatherFlowError(
+                code=ErrorCode.STATION_NOT_FOUND,
+                message="Station not found.",
+                hint="Call get_stations to list valid station_ids.",
+                field_name="station_id",
+                value=station_id,
+                next={"tool": "get_stations"},
+                details={"upstream_status": 404, "operation": operation},
+            )
+        return WeatherFlowError(
+            code=ErrorCode.UPSTREAM_INVALID_RESPONSE,
+            message=f"Upstream returned 404 for operation {operation!r}.",
+            details={"upstream_status": 404, "operation": operation},
+        )
+    if status == 429:
+        return WeatherFlowError(
+            code=ErrorCode.RATE_LIMITED,
+            message="WeatherFlow rate limit hit.",
+            hint="Wait retry_after_ms before retrying.",
+            retry_after_ms=_retry_after_ms(e.headers),
+            details={"upstream_status": 429, "operation": operation},
+        )
+    if 500 <= status < 600:
+        return WeatherFlowError(
+            code=ErrorCode.UPSTREAM_UNAVAILABLE,
+            message="WeatherFlow API is temporarily unavailable.",
+            hint="Retry in a few seconds.",
+            details={"upstream_status": status, "operation": operation},
+        )
+    return WeatherFlowError(
+        code=ErrorCode.UPSTREAM_INVALID_RESPONSE,
+        message=f"Unexpected upstream status {status}.",
+        details={"upstream_status": status, "operation": operation},
+    )
 
 
 async def api_get_stations(token: str) -> dict:
