@@ -53,8 +53,27 @@ Just add an additional `--from` argument:
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
 | `WEATHERFLOW_API_TOKEN` | Your WeatherFlow API token | - | ✅ Yes |
-| `WEATHERFLOW_CACHE_TTL` | Cache timeout in seconds | 300 | No |
-| `WEATHERFLOW_CACHE_SIZE` | Maximum cache entries | 100 | No |
+| `WEATHERFLOW_CACHE_TTL` | In-memory cache TTL in seconds | 300 | No |
+| `WEATHERFLOW_CACHE_SIZE` | Maximum in-memory cache entries | 100 | No |
+| `WEATHERFLOW_DISK_CACHE_TTL` | Disk cache TTL in seconds | 86400 | No |
+
+### Caching & data freshness
+
+The server caches responses in two layers:
+
+- **In-memory** (`WEATHERFLOW_CACHE_TTL` / `WEATHERFLOW_CACHE_SIZE`): all four
+  tools.
+- **On disk** (`WEATHERFLOW_DISK_CACHE_TTL`, default 24h): `get_stations` and
+  `get_station_details` only. Stored under
+  `platformdirs.user_cache_dir("mcp-server-tempest")` in a per-token
+  (hash-keyed) subdirectory.
+
+To clear: restart the server (in-memory) or delete the cache directory
+(disk).
+
+### Transport
+
+stdio (the default for `uvx mcp-server-tempest` and the README config).
 
 
 ## 🛠️ Usage
