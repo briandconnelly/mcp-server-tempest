@@ -19,8 +19,11 @@ Setup:
 
 Environment Variables:
     WEATHERFLOW_API_TOKEN: Your WeatherFlow API token (required)
-    WEATHERFLOW_CACHE_TTL: Cache timeout in seconds (default: 300)
-    WEATHERFLOW_CACHE_SIZE: Maximum cache entries (default: 100)
+    WEATHERFLOW_CACHE_TTL: In-memory cache TTL in seconds (default: 300)
+    WEATHERFLOW_CACHE_SIZE: Maximum in-memory cache entries (default: 100)
+    WEATHERFLOW_DISK_CACHE_TTL: Disk cache TTL in seconds (default: 86400).
+        Per-token JSON files under platformdirs.user_cache_dir(
+        "mcp-server-tempest"). Used by get_stations and get_station_details.
 
 Example Usage:
     # Get available stations
