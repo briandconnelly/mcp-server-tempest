@@ -96,3 +96,15 @@ class TestRetryAfterMs:
 
     def test_empty_value_returns_none(self):
         assert _retry_after_ms({"Retry-After": ""}) is None
+
+    def test_negative_value_returns_none(self):
+        # RFC 9110 §10.2.3: delay-seconds is 1*DIGIT (non-negative).
+        # Out-of-spec input — drop and degrade gracefully.
+        assert _retry_after_ms({"Retry-After": "-5"}) is None
+
+    def test_inf_value_returns_none(self):
+        # `int(float("inf") * 1000)` would raise OverflowError; we filter first.
+        assert _retry_after_ms({"Retry-After": "inf"}) is None
+
+    def test_nan_value_returns_none(self):
+        assert _retry_after_ms({"Retry-After": "nan"}) is None
