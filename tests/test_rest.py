@@ -222,6 +222,11 @@ class TestApiGetStationsErrorMapping:
             with pytest.raises(WeatherFlowError) as excinfo:
                 await api_get_stations("fake-token")
             assert excinfo.value.code is ErrorCode.AUTH_INVALID
+            # Chained traceback: the upstream cause is preserved via `from e`.
+            # If a future refactor drops `from e`, debugging server logs loses
+            # the upstream context — this assertion locks that down.
+            assert isinstance(excinfo.value.__cause__, aiohttp.ClientResponseError)
+            assert excinfo.value.__cause__.status == 401
 
     async def test_clienterror_maps_to_upstream_unavailable(self):
         async def boom(self):

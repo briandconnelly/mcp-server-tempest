@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking
+
+- All tool errors now return a structured JSON payload as the `ToolError`
+  message (i.e. in `content[0].text` on the wire). The payload is a flat
+  top-level object with stable fields:
+  - `code` (string enum): one of `auth_missing`, `auth_invalid`,
+    `auth_forbidden`, `station_not_found`, `rate_limited`,
+    `upstream_unavailable`, `upstream_invalid_response`, `internal_error`.
+  - `message` (string): human-readable summary; may change between versions.
+  - `temporary` (bool): `true` for `rate_limited` and `upstream_unavailable`.
+  - `request_id` (string): 16-hex-char per-call correlation id.
+  - Optional: `hint`, `field`, `value`, `next` (e.g. `{"tool": "get_stations"}`),
+    `retry_after_ms`, `details`.
+
+  Clients parsing the previous prose `"Request failed: ..."` form must update
+  to `JSON.parse(error.text)`. Clients MUST treat unknown top-level keys and
+  unknown `code` values as opaque to remain forward-compatible.
+- Removed the `mask_error_details=True` server config option (was a no-op
+  because every tool already wrapped exceptions into a `FastMCPError`
+  subclass, which the framework's masking explicitly skips).
+
+### Added
+
+- Distinct credential failure modes: `auth_missing` (env var unset),
+  `auth_invalid` (upstream 401), `auth_forbidden` (upstream 403). Previously
+  collapsed into one prose message.
+- `request_id` is logged with every error and echoed in `internal_error`'s
+  `hint` so users can correlate failures with server logs.
+
 ## [0.4.0] - 2026-05-02
 
 ### Breaking
