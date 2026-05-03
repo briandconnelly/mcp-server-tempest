@@ -36,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `request_id` is logged with every error and echoed in `internal_error`'s
   `hint` so users can correlate failures with server logs.
 
+### Changed
+
+- Server `instructions` now declares the ambient-state surface (cache env
+  vars, disk cache path) and names the transport (stdio). Adds AMBIENT
+  STATE, SETUP, and TRANSPORT sections; the previous trailing "Setup:"
+  line is replaced by the new SETUP section. Closes audit F4 and F7.
+- README: documented `WEATHERFLOW_DISK_CACHE_TTL` and the disk cache
+  directory; added Caching & data freshness and Transport subsections.
+
 ## [0.4.0] - 2026-05-02
 
 ### Breaking
