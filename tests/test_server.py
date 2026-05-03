@@ -444,9 +444,14 @@ class TestTools:
                 "mcp_server_tempest.server.api_get_stations",
                 side_effect=Exception("API down"),
             ),
-            pytest.raises(ToolError, match="Request failed"),
+            pytest.raises(ToolError) as excinfo,
         ):
             await get_stations(ctx=mock_ctx)
+        payload = json.loads(excinfo.value.args[0])
+        assert payload["code"] == "internal_error"
+        assert payload["temporary"] is False
+        assert "API down" not in payload["message"]
+        assert payload["request_id"] in payload["hint"]
 
     async def test_get_station_details(self, mock_ctx):
         with patch(
@@ -462,9 +467,11 @@ class TestTools:
                 "mcp_server_tempest.server.api_get_station_id",
                 side_effect=Exception("Not found"),
             ),
-            pytest.raises(ToolError, match="Request failed"),
+            pytest.raises(ToolError) as excinfo,
         ):
             await get_station_details(station_id=99999, ctx=mock_ctx)
+        payload = json.loads(excinfo.value.args[0])
+        assert payload["code"] == "internal_error"
 
     async def test_get_forecast(self, mock_ctx):
         with patch(
@@ -480,9 +487,11 @@ class TestTools:
                 "mcp_server_tempest.server.api_get_forecast",
                 side_effect=Exception("Timeout"),
             ),
-            pytest.raises(ToolError, match="Request failed"),
+            pytest.raises(ToolError) as excinfo,
         ):
             await get_forecast(station_id=12345, ctx=mock_ctx)
+        payload = json.loads(excinfo.value.args[0])
+        assert payload["code"] == "internal_error"
 
     async def test_get_observation(self, mock_ctx):
         with patch(
@@ -498,9 +507,11 @@ class TestTools:
                 "mcp_server_tempest.server.api_get_observation",
                 side_effect=Exception("Bad request"),
             ),
-            pytest.raises(ToolError, match="Request failed"),
+            pytest.raises(ToolError) as excinfo,
         ):
             await get_observation(station_id=12345, ctx=mock_ctx)
+        payload = json.loads(excinfo.value.args[0])
+        assert payload["code"] == "internal_error"
 
 
 # -- Tests for lifespan --
@@ -1043,8 +1054,11 @@ class TestToolErrorPassthrough:
 
     async def test_get_stations_no_token_preserves_message(self, mock_ctx):
         with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ToolError, match="not configured"):
+            with pytest.raises(ToolError) as excinfo:
                 await get_stations(ctx=mock_ctx)
+            payload = json.loads(excinfo.value.args[0])
+            assert payload["code"] == "auth_missing"
+            assert "WEATHERFLOW_API_TOKEN" in payload["message"]
 
 
 # -- Tests for disk cache integration in server --

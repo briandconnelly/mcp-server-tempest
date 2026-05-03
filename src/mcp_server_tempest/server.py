@@ -202,7 +202,6 @@ Setup: requires WEATHERFLOW_API_TOKEN
 (https://tempestwx.com/settings/tokens).
 """,
     lifespan=lifespan,
-    mask_error_details=True,
     on_duplicate="error",
 )
 
@@ -512,13 +511,11 @@ async def get_stations(
     devices, and capabilities. Admin/internal fields are excluded.
     """
 
-    try:
+    async def _work() -> dict:
         data = await _get_stations_data(ctx)
         return data.model_dump(exclude=_STATIONS_EXCLUDE)
-    except ToolError:
-        raise
-    except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}") from e
+
+    return await _dispatch(_work)
 
 
 @mcp.tool(
@@ -549,13 +546,12 @@ async def get_station_details(
     Output: detailed station record — devices, sensor capabilities, location,
     metadata. Rarely needed if the user only asked about weather.
     """
-    try:
+
+    async def _work() -> dict:
         data = await _get_station_details_data(station_id, ctx)
         return data.model_dump(exclude=_STATION_EXCLUDE)
-    except ToolError:
-        raise
-    except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}") from e
+
+    return await _dispatch(_work)
 
 
 @mcp.tool(
@@ -624,7 +620,8 @@ async def get_forecast(
     Output: current snapshot + hourly + daily forecasts in the station's
     configured units — read 'units' in the response.
     """
-    try:
+
+    async def _work() -> dict:
         data = await _get_forecast_data(station_id, ctx)
         result = data.model_dump(exclude=_FORECAST_EXCLUDE)
 
@@ -638,10 +635,8 @@ async def get_forecast(
                 result.pop(key, None)
 
         return result
-    except ToolError:
-        raise
-    except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}") from e
+
+    return await _dispatch(_work)
 
 
 @mcp.tool(
@@ -685,22 +680,20 @@ async def get_observation(
     'station_units' in the response.
     """
 
-    try:
+    async def _work() -> dict:
         data = await _get_observation_data(station_id, ctx)
         result = data.model_dump(exclude=_OBSERVATION_EXCLUDE)
 
         if not detailed:
             for obs in result["obs"]:
-                for field in _OBSERVATION_SUMMARY_FIELDS:
-                    obs.pop(field, None)
+                for field_name in _OBSERVATION_SUMMARY_FIELDS:
+                    obs.pop(field_name, None)
             for key in ("latitude", "longitude", "elevation", "is_public"):
                 result.pop(key, None)
 
         return result
-    except ToolError:
-        raise
-    except Exception as e:
-        raise ToolError(f"Request failed: {str(e)}") from e
+
+    return await _dispatch(_work)
 
 
 @mcp.custom_route("/health", methods=["GET"])
