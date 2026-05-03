@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from mcp_server_tempest.rest import (
+    _retry_after_ms,
     api_get_forecast,
     api_get_observation,
     api_get_station_id,
@@ -73,3 +74,25 @@ class TestApiGetObservation:
             result = await api_get_observation(123, "fake-token")
             assert result == {"obs": []}
             mock_api.async_get_observation.assert_called_once_with(station_id=123)
+
+
+class TestRetryAfterMs:
+    def test_seconds_form(self):
+        assert _retry_after_ms({"Retry-After": "5"}) == 5000
+
+    def test_float_seconds_form(self):
+        assert _retry_after_ms({"Retry-After": "1.5"}) == 1500
+
+    def test_missing_header_returns_none(self):
+        assert _retry_after_ms({}) is None
+
+    def test_none_headers_returns_none(self):
+        assert _retry_after_ms(None) is None
+
+    def test_http_date_form_returns_none(self):
+        # We intentionally don't parse RFC 7231 §7.1.3 HTTP-date form;
+        # documented behavior is "drop and degrade gracefully"
+        assert _retry_after_ms({"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"}) is None
+
+    def test_empty_value_returns_none(self):
+        assert _retry_after_ms({"Retry-After": ""}) is None

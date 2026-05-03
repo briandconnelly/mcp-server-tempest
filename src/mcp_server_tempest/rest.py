@@ -1,4 +1,25 @@
+from collections.abc import Mapping
+
 from weatherflow4py.api import WeatherFlowRestAPI
+
+
+def _retry_after_ms(headers: Mapping[str, str] | None) -> int | None:
+    """Parse a `Retry-After` header value to milliseconds.
+
+    Numeric-seconds form only. HTTP-date form (RFC 7231 §7.1.3) returns
+    None — agents seeing `temporary: true` without `retry_after_ms`
+    should treat it as 'retry with backoff' (see wire-contract policy
+    in the spec).
+    """
+    if not headers:
+        return None
+    raw = headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return int(float(raw) * 1000)
+    except ValueError:
+        return None
 
 
 async def api_get_stations(token: str) -> dict:
