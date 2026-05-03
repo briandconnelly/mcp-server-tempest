@@ -236,8 +236,8 @@ AMBIENT STATE (env vars and side state the server reads):
 - Cache scope: WEATHERFLOW_CACHE_TTL / WEATHERFLOW_CACHE_SIZE govern an
   in-memory cache used by all four tools. Disk cache
   (WEATHERFLOW_DISK_CACHE_TTL) applies only to get_stations and
-  get_station_details. To clear: restart for in-memory; delete the cache
-  directory above for disk.
+  get_station_details. To clear: ask the user to restart the server for
+  the in-memory cache; delete the cache directory above for disk.
 
 TYPICAL WORKFLOW:
 1. If you don't already have a station_id, call get_stations first.
@@ -248,8 +248,8 @@ TYPICAL WORKFLOW:
 SETUP (required):
 - WEATHERFLOW_API_TOKEN — get one at https://tempestwx.com/settings/tokens.
 
-TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (used by
-`uvx` and the README config) calls `mcp.run()` with the stdio default.
+TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
+`uvx`) speaks MCP over stdio.
 """,
     lifespan=lifespan,
     on_duplicate="error",
