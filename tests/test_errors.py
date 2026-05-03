@@ -116,14 +116,16 @@ class TestWeatherFlowErrorToolError:
         assert isinstance(te, ToolError)
 
     def test_to_tool_error_message_is_compact_json(self):
+        # Use a space-free message so any space in the body must come from
+        # the serializer — guards against someone flipping separators back
+        # to defaults.
         wfe = WeatherFlowError(code=ErrorCode.AUTH_INVALID, message="bad")
-        te = wfe.to_tool_error("rid")
-        # The single positional arg is the message we ship to the client
-        body = te.args[0]
-        # Compact: no spaces around separators
-        assert " " not in body or body.count(" ") <= body.count('": "')  # tolerant
-        parsed = json.loads(body)
-        assert parsed == wfe.to_payload("rid")
+        body = wfe.to_tool_error("rid").args[0]
+        # Byte-equality against a known-compact reference is the strict check.
+        expected = json.dumps(wfe.to_payload("rid"), separators=(",", ":"))
+        assert body == expected
+        # And the body must be parseable back to the same payload.
+        assert json.loads(body) == wfe.to_payload("rid")
 
     def test_to_tool_error_round_trips_all_fields(self):
         wfe = WeatherFlowError(
