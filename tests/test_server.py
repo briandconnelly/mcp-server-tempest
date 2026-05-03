@@ -1042,15 +1042,23 @@ class TestGetDiskCache:
 
 @pytest.mark.usefixtures("_set_token")
 class TestToolErrorPassthrough:
-    async def test_get_stations_preserves_tool_error(self, mock_ctx):
+    async def test_get_stations_unstructured_tool_error_becomes_internal_error(self, mock_ctx):
+        # An unstructured ToolError raised inside the tool body must NOT
+        # leak through — _dispatch wraps it as internal_error so the wire
+        # contract holds for every error path.
         with (
             patch(
                 "mcp_server_tempest.server.api_get_stations",
-                side_effect=ToolError("specific error"),
+                side_effect=ToolError("plain prose error"),
             ),
-            pytest.raises(ToolError, match="specific error"),
+            pytest.raises(ToolError) as excinfo,
         ):
             await get_stations(ctx=mock_ctx)
+        payload = json.loads(excinfo.value.args[0])
+        assert payload["code"] == "internal_error"
+        # The original prose must NOT leak into the structured payload.
+        assert "plain prose error" not in payload["message"]
+        assert "plain prose error" not in payload.get("hint", "")
 
     async def test_get_stations_no_token_preserves_message(self, mock_ctx):
         with patch.dict(os.environ, {}, clear=True):
@@ -1170,14 +1178,56 @@ class TestDispatch:
         # request_id appears in the hint so users can correlate logs
         assert payload["request_id"] in payload["hint"]
 
-    async def test_pre_structured_tool_error_passes_through(self):
+    async def test_structured_tool_error_passes_through(self):
+        # If a helper has already produced a structured ToolError (e.g. via
+        # WeatherFlowError.to_tool_error), _dispatch must NOT re-wrap it —
+        # the original code/message/request_id are preserved verbatim.
+        from mcp_server_tempest.server import _dispatch
+
+        original = WeatherFlowError(
+            code=ErrorCode.AUTH_INVALID,
+            message="bad",
+        ).to_tool_error("preserved-rid")
+
+        async def work():
+            raise original
+
+        with pytest.raises(ToolError) as excinfo:
+            await _dispatch(work)
+        # Pass-through: same exception object, same JSON, same rid.
+        assert excinfo.value is original
+        payload = json.loads(excinfo.value.args[0])
+        assert payload["code"] == "auth_invalid"
+        assert payload["request_id"] == "preserved-rid"
+
+    async def test_unstructured_tool_error_becomes_internal_error(self):
+        # Plain ToolError("...") with no JSON body is unstructured and gets
+        # wrapped as internal_error so the wire contract holds even when
+        # a helper or future framework path forgets to use WeatherFlowError.
         from mcp_server_tempest.server import _dispatch
 
         async def work():
-            raise ToolError("already structured")
+            raise ToolError("naked text")
 
-        with pytest.raises(ToolError, match="already structured"):
+        with pytest.raises(ToolError) as excinfo:
             await _dispatch(work)
+        payload = json.loads(excinfo.value.args[0])
+        assert payload["code"] == "internal_error"
+        assert "naked text" not in payload["message"]
+        assert "naked text" not in payload.get("hint", "")
+
+    async def test_tool_error_with_unknown_code_becomes_internal_error(self):
+        # JSON ToolError but with a code we don't recognize → still wrapped
+        # (defends against forward-compat tampering or out-of-band sources).
+        from mcp_server_tempest.server import _dispatch
+
+        async def work():
+            raise ToolError(json.dumps({"code": "NOT_OUR_CODE", "message": "x"}))
+
+        with pytest.raises(ToolError) as excinfo:
+            await _dispatch(work)
+        payload = json.loads(excinfo.value.args[0])
+        assert payload["code"] == "internal_error"
 
     async def test_distinct_request_ids(self):
         from mcp_server_tempest.server import _dispatch

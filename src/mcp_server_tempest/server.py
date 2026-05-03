@@ -33,6 +33,7 @@ Example Usage:
     forecast = await client.call_tool("get_forecast", {"station_id": 12345})
 """
 
+import json
 import logging
 import os
 import secrets
@@ -73,10 +74,29 @@ def _new_request_id() -> str:
     return secrets.token_hex(8)
 
 
+_KNOWN_CODES: frozenset[str] = frozenset(c.value for c in ErrorCode)
+
+
+def _is_structured_tool_error(te: ToolError) -> bool:
+    """True iff the ToolError message is a JSON payload with a known code.
+
+    `WeatherFlowError.to_tool_error` produces this exact shape; anything else
+    is unstructured and must not bypass _dispatch's wire-contract enforcement.
+    """
+    if not te.args:
+        return False
+    try:
+        payload = json.loads(te.args[0])
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("code") in _KNOWN_CODES
+
+
 async def _dispatch(work: Callable[[], Awaitable[T]]) -> T:
     """Run a tool body. Convert WeatherFlowError → structured JSON ToolError;
-    pass through any already-structured ToolError (debug-logged for correlation);
-    convert anything else → internal_error ToolError. Always log with rid.
+    pass through ToolErrors that already carry a structured payload; convert
+    everything else (including unstructured ToolErrors) → internal_error.
+    Always log with rid.
     """
     rid = _new_request_id()
     try:
@@ -84,9 +104,20 @@ async def _dispatch(work: Callable[[], Awaitable[T]]) -> T:
     except WeatherFlowError as wfe:
         logger.warning("rid=%s code=%s msg=%s", rid, wfe.code.value, wfe.message)
         raise wfe.to_tool_error(rid) from wfe
-    except ToolError:
-        logger.debug("rid=%s passing through pre-structured ToolError", rid)
-        raise
+    except ToolError as te:
+        # Pass through ONLY if already structured. Plain ToolError("text") from
+        # a helper or future framework path would otherwise leak as unstructured
+        # text and defeat the wire contract; wrap it as internal_error instead.
+        if _is_structured_tool_error(te):
+            logger.debug("rid=%s passing through pre-structured ToolError", rid)
+            raise
+        logger.error("rid=%s caught unstructured ToolError: %r", rid, te.args)
+        wfe = WeatherFlowError(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Unexpected server error.",
+            hint=f"Check server logs for request_id={rid}.",
+        )
+        raise wfe.to_tool_error(rid) from te
     except Exception as exc:
         logger.error("rid=%s unexpected: %s\n%s", rid, exc, traceback.format_exc())
         wfe = WeatherFlowError(
