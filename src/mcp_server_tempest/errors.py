@@ -4,9 +4,12 @@ See docs/superpowers/specs/2026-05-03-structured-errors-design.md for the
 contract that this module implements.
 """
 
+import json
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+
+from fastmcp.exceptions import ToolError
 
 
 class ErrorCode(StrEnum):
@@ -81,3 +84,12 @@ class WeatherFlowError(Exception):
         if self.details:
             out["details"] = self.details
         return out
+
+    def to_tool_error(self, request_id: str) -> ToolError:
+        """Serialize to a fastmcp ToolError carrying compact JSON.
+
+        FastMCP's transport sets isError: true on the wire automatically when
+        a tool raises ToolError; the JSON we put here lands in
+        content[0].text for every MCP client.
+        """
+        return ToolError(json.dumps(self.to_payload(request_id), separators=(",", ":")))

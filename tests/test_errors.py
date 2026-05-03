@@ -1,6 +1,9 @@
 """Tests for the structured-error model."""
 
+import json
+
 import pytest
+from fastmcp.exceptions import ToolError
 
 from mcp_server_tempest.errors import _TEMPORARY, ErrorCode, WeatherFlowError
 
@@ -104,3 +107,38 @@ class TestWeatherFlowErrorPayload:
         wfe = WeatherFlowError(code=ErrorCode.AUTH_INVALID, message="bad token")
         assert str(wfe) == "bad token"
         assert wfe.args == ("bad token",)
+
+
+class TestWeatherFlowErrorToolError:
+    def test_to_tool_error_is_tool_error(self):
+        wfe = WeatherFlowError(code=ErrorCode.AUTH_INVALID, message="bad")
+        te = wfe.to_tool_error("rid")
+        assert isinstance(te, ToolError)
+
+    def test_to_tool_error_message_is_compact_json(self):
+        wfe = WeatherFlowError(code=ErrorCode.AUTH_INVALID, message="bad")
+        te = wfe.to_tool_error("rid")
+        # The single positional arg is the message we ship to the client
+        body = te.args[0]
+        # Compact: no spaces around separators
+        assert " " not in body or body.count(" ") <= body.count('": "')  # tolerant
+        parsed = json.loads(body)
+        assert parsed == wfe.to_payload("rid")
+
+    def test_to_tool_error_round_trips_all_fields(self):
+        wfe = WeatherFlowError(
+            code=ErrorCode.STATION_NOT_FOUND,
+            message="no such station",
+            hint="call get_stations",
+            field_name="station_id",
+            value=99999,
+            next={"tool": "get_stations"},
+            retry_after_ms=None,
+            details={"upstream_status": 404, "operation": "observation"},
+        )
+        parsed = json.loads(wfe.to_tool_error("rid").args[0])
+        assert parsed["code"] == "station_not_found"
+        assert parsed["field"] == "station_id"
+        assert parsed["value"] == 99999
+        assert parsed["next"] == {"tool": "get_stations"}
+        assert parsed["details"]["operation"] == "observation"
