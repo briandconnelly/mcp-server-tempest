@@ -296,7 +296,16 @@ def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
 
 
 def _lock_additional_properties(obj: Any) -> None:
-    """Recursively set ``additionalProperties: false`` on every object schema.
+    """Recursively fill in ``additionalProperties: false`` on every object
+    schema that does not already declare a value for ``additionalProperties``.
+
+    The conditional guard preserves explicit declarations: a future model
+    with ``model_config = ConfigDict(extra="allow")`` would cause Pydantic
+    to emit ``additionalProperties: true`` in the generated schema, and
+    that intent should survive the lockdown. Today no model opts in (and
+    ``test_runtime_models_remain_permissive`` asserts ``extra="ignore"``
+    everywhere), so the helper acts as a default-filling pass on every
+    object schema in practice.
 
     Locks the published JSON Schema (output contract) without touching the
     runtime Pydantic models — those keep their default ``extra="ignore"`` so
