@@ -963,9 +963,16 @@ class TestServerInstructions:
         # SERVER SURFACE acts as a lightweight capability fingerprint (§9 of
         # the agent-friendly-mcp checklist). Format is `name@version` so a
         # cached client can diff this string instead of re-walking discovery.
+        # The regex enforces that *some* non-whitespace version follows the
+        # `@`, catching a regression where the version interpolation drops
+        # to an empty string without locking in a specific release.
+        import re
+
         text = mcp.instructions
         assert "SERVER SURFACE" in text
-        assert "mcp-server-tempest@" in text
+        assert re.search(r"mcp-server-tempest@\S+", text), (
+            "SERVER SURFACE fingerprint must carry a non-empty version after '@'"
+        )
 
     def test_instructions_documents_ambient_state_and_transport(self):
         text = mcp.instructions
