@@ -220,7 +220,6 @@ DO NOT USE for:
 
 TOOL SELECTION:
 - "How many / list my stations"              -> get_stations
-    (returns full station listing — id, name, location, devices, capabilities)
 - "Deeper config / hardware for one station" -> get_station_details(station_id)
 - "Current conditions / right now"           -> get_observation(station_id)
 - "Forecast / later / tomorrow / this week"  -> get_forecast(station_id)
@@ -228,28 +227,24 @@ TOOL SELECTION:
 NOTES:
 - Units follow each station's config — read 'station_units' / 'units' fields.
   Never assume °F vs °C or mph vs km/h.
-- get_stations already returns devices and capabilities for each station —
-  only call get_station_details if you need the deeper per-station record.
-- get_forecast also returns a current snapshot — but prefer get_observation
-  for current-only questions (lighter response).
-- get_forecast accepts hours (1-48) and days (1-10), but the default summary
-  response is capped to at most 6 hourly / 2 daily entries — smaller hours/
-  days values are still honored. Pass detailed=True to use the full hours/
-  days ranges (and to get raw/full sensor data) — it returns a much larger
-  response.
+- get_stations already returns devices and capabilities — only call
+  get_station_details for the deeper per-station record.
+- get_forecast also returns a current snapshot, but get_observation is
+  lighter for current-only questions.
+- get_forecast in summary mode (default) caps at 6 hourly / 2 daily; pass
+  detailed=True for full ranges. The response carries `truncated`,
+  `requested_*`, `returned_*`, and `truncation_hint` so clients can
+  detect clipping structurally.
 
-AMBIENT STATE (env vars and side state the server reads):
-- WEATHERFLOW_CACHE_TTL — in-memory TTL in seconds (default 300).
-- WEATHERFLOW_CACHE_SIZE — max in-memory entries (default 100).
-- WEATHERFLOW_DISK_CACHE_TTL — disk cache TTL in seconds (default 86400).
-- Disk cache: per-token subdirectory (hash-keyed for account isolation)
-  under platformdirs.user_cache_dir("mcp-server-tempest"). Survives
-  restarts.
-- Cache scope: WEATHERFLOW_CACHE_TTL / WEATHERFLOW_CACHE_SIZE govern an
-  in-memory cache used by all four tools. Disk cache
-  (WEATHERFLOW_DISK_CACHE_TTL) applies only to get_stations and
-  get_station_details. To clear: ask the user to restart the server for
-  the in-memory cache; delete the cache directory above for disk.
+AMBIENT STATE (affects freshness and cache repair):
+- WEATHERFLOW_CACHE_TTL (default 300s) and WEATHERFLOW_CACHE_SIZE
+  (default 100): in-memory cache used by all four tools.
+- WEATHERFLOW_DISK_CACHE_TTL (default 86400s): disk cache for
+  get_stations and get_station_details only. Survives restarts; per-token
+  subdirectory (hash-keyed for account isolation) under
+  platformdirs.user_cache_dir("mcp-server-tempest").
+- To force fresh data: restart the server (clears in-memory) or delete
+  the cache directory above (clears disk).
 
 TYPICAL WORKFLOW:
 1. If you don't already have a station_id, call get_stations first.
@@ -260,9 +255,8 @@ TYPICAL WORKFLOW:
 SETUP (required):
 - WEATHERFLOW_API_TOKEN — get one at https://tempestwx.com/settings/tokens.
 
-SERVER SURFACE: mcp-server-tempest@{version} — bumps with any change to the
-tool list, tool schemas, error codes, or instructions. Cached clients can
-short-circuit re-discovery when this string is unchanged.
+SERVER SURFACE: mcp-server-tempest@{version} — capability fingerprint;
+bumps on any change to tools, schemas, error codes, or instructions.
 
 TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
 `uvx`) speaks MCP over stdio.
@@ -596,13 +590,11 @@ async def _get_observation_data(
 async def get_stations(
     ctx: Context | None = None,
 ) -> dict:
-    """List the user's weather stations along with each station's location,
-    devices, and capabilities.
+    """List the user's weather stations.
 
-    Use when: you need a station_id and don't have one. Always call this first
-    if no station_id has appeared in the conversation. The response also
-    covers most "what stations / where / what devices" questions without a
-    follow-up call to get_station_details.
+    Use when: station_id is unknown, or for general inventory ("what
+    stations do I have", "where", "what devices"). Covers most
+    inventory questions without a follow-up call to get_station_details.
 
     Don't use for: current conditions (-> get_observation) or forecasts
     (-> get_forecast).
@@ -649,8 +641,7 @@ async def get_station_details(
     have"), location ("where is my station", "elevation", "what's my
     timezone"), or station-level metadata.
 
-    Don't use for: weather data (-> get_observation, -> get_forecast). Don't
-    use to find a station_id — that comes from get_stations.
+    Don't use for: weather data (-> get_observation, -> get_forecast).
 
     Workflow: requires station_id from get_stations.
 
@@ -695,10 +686,7 @@ async def get_forecast(
         int,
         Field(
             default=12,
-            description=(
-                "Number of hourly forecasts to return (default: 12, max ~48)."
-                " Capped at 6 in summary mode."
-            ),
+            description="Hourly forecasts to return. Capped at 6 in summary mode.",
             ge=1,
             le=48,
         ),
@@ -707,10 +695,7 @@ async def get_forecast(
         int,
         Field(
             default=5,
-            description=(
-                "Number of daily forecasts to return (default: 5, max ~10)."
-                " Capped at 2 in summary mode."
-            ),
+            description="Daily forecasts to return. Capped at 2 in summary mode.",
             ge=1,
             le=10,
         ),
@@ -719,7 +704,7 @@ async def get_forecast(
         bool,
         Field(
             default=False,
-            description="If true, return full response. Default returns a condensed summary.",
+            description="If true, return full response. Default is a condensed summary.",
         ),
     ] = False,
     ctx: Context | None = None,
@@ -730,15 +715,14 @@ async def get_forecast(
     Use when: user asks about future weather ("will it rain tomorrow", "this
     weekend", "10-day forecast", "next few hours").
 
-    Don't use for: current-only questions when get_observation will do — this
-    returns a much larger response. If you need both current AND future, this
-    tool covers both in one call.
+    Don't use for: current-only questions when get_observation will do —
+    this returns a much larger response. If you need both current AND
+    future, this tool covers both in one call.
 
-    Parameters: hours (1-48), days (1-10), detailed (default False). In
-    summary mode the response is capped to 6 hourly and 2 daily entries
-    regardless of hours/days; pass detailed=True to use the full ranges.
-
-    Workflow: requires station_id from get_stations.
+    Workflow: requires station_id from get_stations. Summary mode (default)
+    caps at 6 hourly / 2 daily; pass detailed=True for full ranges. The
+    response carries `truncated` and `truncation_hint` so clients can
+    detect clipping without parsing this prose.
 
     Output: current snapshot + hourly + daily forecasts in the station's
     configured units — read 'units' in the response.
@@ -820,7 +804,7 @@ async def get_observation(
         bool,
         Field(
             default=False,
-            description="If true, return full response. Default returns a condensed summary.",
+            description="If true, return full response. Default is a condensed summary.",
         ),
     ] = False,
     ctx: Context | None = None,

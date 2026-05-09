@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-09
+
+### Added
+
+- Structured truncation fields on `ForecastResponse`: `truncated`,
+  `requested_hours`, `requested_days`, `returned_hours`, `returned_days`,
+  `truncation_hint`. Agents detect clipping without parsing prose; honest
+  under both summary-cap and upstream-shortfall paths.
+- Each tool docstring lists its structured `code` values, with per-tool
+  subsets matching the call paths in `rest.py` (`get_stations` correctly
+  excludes `station_not_found`).
+- `SERVER SURFACE: mcp-server-tempest@<version>` line in the
+  `instructions` block — a lightweight capability fingerprint per §9 of
+  the agent-friendliness checklist. Read from package metadata at import
+  time so it stays in sync with `pyproject.toml`.
+
+### Changed
+
+- Server `name` tightened from `"WeatherFlow Tempest API Server"` to
+  `"WeatherFlow Tempest"` (drops the generic suffix).
+- All published tool `outputSchema` definitions set
+  `additionalProperties: false` recursively. Runtime ingest models stay
+  permissive (`extra="ignore"`), so upstream WeatherFlow additions are
+  silently dropped on parse rather than raising. Strict-mode clients
+  should treat this as a tightening of the already-stable contract.
+- Compressed agent-facing context for token efficiency: `instructions`
+  block (NOTES, AMBIENT STATE, SERVER SURFACE), `get_stations` /
+  `get_station_details` / `get_forecast` docstrings, and `hours` /
+  `days` / `detailed` field descriptions. All required content
+  (env-var names, cache path, transport, fingerprint format, error
+  codes) preserved.
+- Auth-code remediations in tool docstrings split per code
+  (`auth_missing` / `auth_invalid` / `auth_forbidden`) instead of one
+  inaccurate shared hint. `internal_error` bullets carry the actual
+  issues URL.
+
 ## [0.5.0] - 2026-05-03
 
 ### Breaking
