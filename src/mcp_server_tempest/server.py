@@ -679,11 +679,27 @@ async def get_forecast(
         if detailed:
             result["forecast"]["hourly"] = result["forecast"]["hourly"][:hours]
             result["forecast"]["daily"] = result["forecast"]["daily"][:days]
+            truncated = False
         else:
             result["forecast"]["hourly"] = result["forecast"]["hourly"][: min(hours, 6)]
             result["forecast"]["daily"] = result["forecast"]["daily"][: min(days, 2)]
             for key in ("latitude", "longitude", "timezone_offset_minutes"):
                 result.pop(key, None)
+            truncated = hours > 6 or days > 2
+
+        result["truncated"] = truncated
+        result["requested_hours"] = hours
+        result["requested_days"] = days
+        result["returned_hours"] = len(result["forecast"]["hourly"])
+        result["returned_days"] = len(result["forecast"]["daily"])
+        if truncated:
+            result["truncation_hint"] = (
+                "summary mode caps to 6 hourly / 2 daily; pass detailed=true for full ranges"
+            )
+        else:
+            # Drop the optional hint key when not truncated to keep the
+            # concise default lean (§8 — strip default-valued fields).
+            result.pop("truncation_hint", None)
 
         return result
 

@@ -369,6 +369,29 @@ class ForecastResponse(BaseModel):
     timezone: str = Field(description="IANA timezone identifier", examples=["America/Los_Angeles"])
     timezone_offset_minutes: int = Field(description="UTC offset in minutes")
     units: Units = Field(description="Unit specifications for all measurements")
+    # Truncation transparency. Populated by the get_forecast tool, not the
+    # upstream API; defaults keep `ForecastResponse(**raw_upstream)` working.
+    truncated: bool = Field(
+        default=False,
+        description=(
+            "True iff the response was clipped relative to the requested "
+            "hours/days (summary mode caps at 6 hourly / 2 daily)."
+        ),
+    )
+    requested_hours: int | None = Field(
+        default=None, description="hours value the agent requested."
+    )
+    requested_days: int | None = Field(default=None, description="days value the agent requested.")
+    returned_hours: int | None = Field(
+        default=None, description="Number of hourly entries actually returned."
+    )
+    returned_days: int | None = Field(
+        default=None, description="Number of daily entries actually returned."
+    )
+    truncation_hint: str | None = Field(
+        default=None,
+        description="Repair hint; present only when truncated=True.",
+    )
 
 
 class ObservationResponse(BaseModel):
