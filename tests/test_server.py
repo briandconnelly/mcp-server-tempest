@@ -1030,6 +1030,49 @@ class TestMcpRegistry:
         assert await mcp.list_resource_templates() == []
 
 
+# -- Tests for per-tool error code documentation --
+
+
+class TestToolErrorDocstrings:
+    """Each tool's docstring must list the error codes it can return so an
+    agent can branch on `code` without invoking the tool to discover them.
+
+    The canonical code set is `errors.ErrorCode`. `station_not_found` is
+    only reachable from station-scoped operations (rest.py:_STATION_SCOPED),
+    so `get_stations` is the only tool that excludes it.
+    """
+
+    # Sourced from the ErrorCode enum so a rename or removal in errors.py
+    # surfaces as a test failure here, not as a stale string literal.
+    SHARED_CODES = tuple(
+        code.value for code in ErrorCode if code is not ErrorCode.STATION_NOT_FOUND
+    )
+
+    def test_get_stations_lists_codes(self):
+        doc = get_stations.__doc__ or ""
+        assert "Errors:" in doc
+        for code in self.SHARED_CODES:
+            assert code in doc, f"{code!r} missing from get_stations docstring"
+        assert "station_not_found" not in doc, (
+            "get_stations cannot return station_not_found — operation 'stations' "
+            "is not in rest.py:_STATION_SCOPED"
+        )
+
+    def test_station_scoped_tools_list_codes(self):
+        for tool, name in (
+            (get_station_details, "get_station_details"),
+            (get_forecast, "get_forecast"),
+            (get_observation, "get_observation"),
+        ):
+            doc = tool.__doc__ or ""
+            assert "Errors:" in doc, f"{name} missing Errors: block"
+            for code in self.SHARED_CODES:
+                assert code in doc, f"{code!r} missing from {name} docstring"
+            assert "station_not_found" in doc, (
+                f"{name} should document station_not_found (station-scoped)"
+            )
+
+
 # -- Tests for _int_env --
 
 
