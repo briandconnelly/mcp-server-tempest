@@ -768,6 +768,10 @@ class TestSummaryModeCaps:
         ):
             result = await get_forecast(station_id=12345, hours=10, ctx=mock_ctx)
             assert len(result["forecast"]["hourly"]) == 6
+            assert result["truncated"] is True
+            assert result["requested_hours"] == 10
+            assert result["returned_hours"] == 6
+            assert "truncation_hint" in result
 
     async def test_summary_caps_days_at_2(self, mock_ctx):
         """Passing days=8 in summary mode should still cap at 2."""
@@ -777,6 +781,121 @@ class TestSummaryModeCaps:
         ):
             result = await get_forecast(station_id=12345, days=8, ctx=mock_ctx)
             assert len(result["forecast"]["daily"]) == 2
+            assert result["truncated"] is True
+            assert result["requested_days"] == 8
+            assert result["returned_days"] == 2
+            assert "truncation_hint" in result
+
+
+# -- Tests for forecast truncation transparency fields --
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestForecastTruncationFields:
+    """Verify that get_forecast surfaces truncation as structured payload
+    fields (F2 from the agent-friendliness audit) so agents do not have to
+    parse prose to detect the summary-mode caps.
+    """
+
+    async def test_summary_small_request_not_truncated(self, mock_ctx):
+        """Requesting within the summary cap should report truncated=False
+        and no truncation_hint."""
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(station_id=12345, hours=3, days=2, ctx=mock_ctx)
+            assert result["truncated"] is False
+            assert result["requested_hours"] == 3
+            assert result["requested_days"] == 2
+            assert result["returned_hours"] == 3
+            assert result["returned_days"] == 2
+            assert "truncation_hint" not in result
+
+    async def test_detailed_never_truncated(self, mock_ctx):
+        """detailed=True bypasses the summary caps. Combined with upstream
+        supplying enough entries (SAMPLE has 48 hourly / 10 daily), the
+        request is satisfied and truncated=False. See
+        test_detailed_mode_upstream_shortfall for the shortfall case.
+        """
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(
+                station_id=12345, hours=24, days=7, detailed=True, ctx=mock_ctx
+            )
+            assert result["truncated"] is False
+            assert result["requested_hours"] == 24
+            assert result["requested_days"] == 7
+            assert result["returned_hours"] == 24
+            assert result["returned_days"] == 7
+            assert "truncation_hint" not in result
+
+    async def test_summary_default_truncates_hours_and_days(self, mock_ctx):
+        """Default summary call (hours=12, days=5) is truncated on both axes."""
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = await get_forecast(station_id=12345, ctx=mock_ctx)
+            assert result["truncated"] is True
+            assert result["requested_hours"] == 12
+            assert result["requested_days"] == 5
+            assert result["returned_hours"] == 6
+            assert result["returned_days"] == 2
+            assert "summary mode caps" in result["truncation_hint"]
+            assert "detailed=true" in result["truncation_hint"]
+
+    async def test_detailed_mode_upstream_shortfall(self, mock_ctx):
+        """If upstream returns fewer entries than requested, truncated=True
+        even in detailed mode — but no truncation_hint, because summary
+        caps weren't the cause and there's no actionable repair beyond
+        what requested_*/returned_* already convey.
+        """
+        short_forecast = {
+            **SAMPLE_FORECAST_DATA,
+            "forecast": {
+                "daily": [_make_daily_forecast(d) for d in range(1, 4)],  # only 3
+                "hourly": [_make_hourly_forecast(h) for h in range(10)],  # only 10
+            },
+        }
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=short_forecast,
+        ):
+            result = await get_forecast(
+                station_id=12345, hours=24, days=7, detailed=True, ctx=mock_ctx
+            )
+            assert result["truncated"] is True
+            assert result["requested_hours"] == 24
+            assert result["returned_hours"] == 10
+            assert result["requested_days"] == 7
+            assert result["returned_days"] == 3
+            assert "truncation_hint" not in result
+
+    async def test_truncation_fields_present_in_all_modes(self, mock_ctx):
+        """truncated/requested_*/returned_* must always be present so agents
+        get a consistent shape regardless of mode."""
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            for kwargs in (
+                {"detailed": True},
+                {"detailed": False},
+                {"hours": 1, "days": 1, "detailed": True},
+                {"hours": 1, "days": 1, "detailed": False},
+            ):
+                result = await get_forecast(station_id=12345, ctx=mock_ctx, **kwargs)
+                for key in (
+                    "truncated",
+                    "requested_hours",
+                    "requested_days",
+                    "returned_hours",
+                    "returned_days",
+                ):
+                    assert key in result, f"{key} missing for kwargs={kwargs}"
 
 
 # -- Tests for _relaxed_schema --
