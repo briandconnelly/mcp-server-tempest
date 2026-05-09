@@ -48,16 +48,6 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Annotated, Any, TypeVar
 
 from cachetools import TTLCache
-
-# Capability fingerprint source. Read directly from the installed dist-info,
-# not from `__init__.__version__`, because `__init__` imports `server.mcp` and
-# the reverse import would be circular. Falls back to "unknown" when the
-# package is not installed (e.g. running from a source checkout without
-# `uv sync` / `pip install -e .`).
-try:
-    _PKG_VERSION = version("mcp-server-tempest")
-except PackageNotFoundError:
-    _PKG_VERSION = "unknown"
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
@@ -82,6 +72,16 @@ from .rest import (
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# Capability fingerprint source. Read directly from the installed dist-info,
+# not from `__init__.__version__`, because `__init__` imports `server.mcp` and
+# the reverse import would be circular. Falls back to "unknown" when the
+# package is not installed (e.g. running from a source checkout without
+# `uv sync` / `pip install -e .`).
+try:
+    _PKG_VERSION = version("mcp-server-tempest")
+except PackageNotFoundError:
+    _PKG_VERSION = "unknown"
 
 
 def _new_request_id() -> str:
