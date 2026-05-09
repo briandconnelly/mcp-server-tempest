@@ -996,6 +996,26 @@ class TestSchemaAdditionalPropertiesLockdown:
         assert "created_epoch" not in _STATION_SCHEMA.get("required", [])
         assert "station_id" in _STATION_SCHEMA["required"]
 
+    def test_lockdown_preserves_explicit_additional_properties(self):
+        """If an object schema already declares additionalProperties (e.g.
+        a future model with ConfigDict(extra='allow') causes Pydantic to
+        emit additionalProperties: true), the helper must not override it.
+        """
+        from mcp_server_tempest.server import _lock_additional_properties
+
+        permissive = {
+            "type": "object",
+            "properties": {"x": {"type": "string"}},
+            "additionalProperties": True,
+        }
+        _lock_additional_properties(permissive)
+        assert permissive["additionalProperties"] is True
+
+        # And a missing key still gets filled in.
+        bare = {"type": "object", "properties": {"x": {"type": "string"}}}
+        _lock_additional_properties(bare)
+        assert bare["additionalProperties"] is False
+
 
 # -- Tests for observation summary/detailed --
 
