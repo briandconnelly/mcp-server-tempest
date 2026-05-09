@@ -954,9 +954,18 @@ class TestServerInstructions:
             "AMBIENT STATE",
             "TYPICAL WORKFLOW",
             "SETUP",
+            "SERVER SURFACE",
             "TRANSPORT",
         ):
             assert marker in text, f"{marker!r} missing from instructions"
+
+    def test_instructions_carries_server_surface_fingerprint(self):
+        # SERVER SURFACE acts as a lightweight capability fingerprint (§9 of
+        # the agent-friendly-mcp checklist). Format is `name@version` so a
+        # cached client can diff this string instead of re-walking discovery.
+        text = mcp.instructions
+        assert "SERVER SURFACE" in text
+        assert "mcp-server-tempest@" in text
 
     def test_instructions_documents_ambient_state_and_transport(self):
         text = mcp.instructions

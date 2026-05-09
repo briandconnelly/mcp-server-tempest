@@ -187,7 +187,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
 
 # Create the MCP server
 mcp = FastMCP(
-    name="WeatherFlow Tempest API Server",
+    name="WeatherFlow Tempest",
     instructions="""\
 WeatherFlow Tempest — read-only access to a user's personal Tempest weather
 station(s). Not a global weather service.
@@ -248,6 +248,10 @@ TYPICAL WORKFLOW:
 
 SETUP (required):
 - WEATHERFLOW_API_TOKEN — get one at https://tempestwx.com/settings/tokens.
+
+SERVER SURFACE: mcp-server-tempest@0.5.0 — bumps with any change to the
+tool list, tool schemas, error codes, or instructions. Cached clients can
+short-circuit re-discovery when this string is unchanged.
 
 TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
 `uvx`) speaks MCP over stdio.
