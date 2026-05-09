@@ -45,7 +45,7 @@ import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError, version
-from typing import Annotated, TypeVar
+from typing import Annotated, Any, TypeVar
 
 from cachetools import TTLCache
 
@@ -295,6 +295,34 @@ def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
 # ---------------------------------------------------------------------------
 
 
+def _lock_additional_properties(obj: Any) -> None:
+    """Recursively fill in ``additionalProperties: false`` on every object
+    schema that does not already declare a value for ``additionalProperties``.
+
+    The conditional guard preserves explicit declarations: a future model
+    with ``model_config = ConfigDict(extra="allow")`` would cause Pydantic
+    to emit ``additionalProperties: true`` in the generated schema, and
+    that intent should survive the lockdown. Today no model opts in (and
+    ``test_runtime_models_remain_permissive`` asserts ``extra="ignore"``
+    everywhere), so the helper acts as a default-filling pass on every
+    object schema in practice.
+
+    Locks the published JSON Schema (output contract) without touching the
+    runtime Pydantic models — those keep their default ``extra="ignore"`` so
+    benign upstream additions to the WeatherFlow API still parse cleanly and
+    are dropped on serialization. Drift detection happens on what we emit,
+    not what we ingest.
+    """
+    if isinstance(obj, dict):
+        if obj.get("type") == "object" and "additionalProperties" not in obj:
+            obj["additionalProperties"] = False
+        for value in obj.values():
+            _lock_additional_properties(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            _lock_additional_properties(item)
+
+
 def _relaxed_schema(
     model_class: type[BaseModel],
     optional_fields: dict[str, set[str]],
@@ -306,6 +334,10 @@ def _relaxed_schema(
         optional_fields: Mapping of schema definition name (or "$root" for the
             top-level object) to the set of field names that should be removed
             from that definition's ``required`` list.
+
+    Also locks every object schema with ``additionalProperties: false`` so
+    clients can detect drift if a tool response sprouts a field that wasn't
+    in the contract.
     """
     schema = model_class.model_json_schema(mode="serialization")
 
@@ -320,6 +352,8 @@ def _relaxed_schema(
     # $defs
     for def_name, defn in schema.get("$defs", {}).items():
         _relax(defn, def_name)
+
+    _lock_additional_properties(schema)
 
     return schema
 
