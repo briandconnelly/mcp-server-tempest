@@ -813,7 +813,11 @@ class TestForecastTruncationFields:
             assert "truncation_hint" not in result
 
     async def test_detailed_never_truncated(self, mock_ctx):
-        """detailed=True bypasses the summary caps entirely."""
+        """detailed=True bypasses the summary caps. Combined with upstream
+        supplying enough entries (SAMPLE has 48 hourly / 10 daily), the
+        request is satisfied and truncated=False. See
+        test_detailed_mode_upstream_shortfall for the shortfall case.
+        """
         with patch(
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
@@ -842,6 +846,33 @@ class TestForecastTruncationFields:
             assert result["returned_days"] == 2
             assert "summary mode caps" in result["truncation_hint"]
             assert "detailed=true" in result["truncation_hint"]
+
+    async def test_detailed_mode_upstream_shortfall(self, mock_ctx):
+        """If upstream returns fewer entries than requested, truncated=True
+        even in detailed mode — but no truncation_hint, because summary
+        caps weren't the cause and there's no actionable repair beyond
+        what requested_*/returned_* already convey.
+        """
+        short_forecast = {
+            **SAMPLE_FORECAST_DATA,
+            "forecast": {
+                "daily": [_make_daily_forecast(d) for d in range(1, 4)],  # only 3
+                "hourly": [_make_hourly_forecast(h) for h in range(10)],  # only 10
+            },
+        }
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=short_forecast,
+        ):
+            result = await get_forecast(
+                station_id=12345, hours=24, days=7, detailed=True, ctx=mock_ctx
+            )
+            assert result["truncated"] is True
+            assert result["requested_hours"] == 24
+            assert result["returned_hours"] == 10
+            assert result["requested_days"] == 7
+            assert result["returned_days"] == 3
+            assert "truncation_hint" not in result
 
     async def test_truncation_fields_present_in_all_modes(self, mock_ctx):
         """truncated/requested_*/returned_* must always be present so agents

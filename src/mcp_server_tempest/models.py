@@ -374,8 +374,11 @@ class ForecastResponse(BaseModel):
     truncated: bool = Field(
         default=False,
         description=(
-            "True iff the response was clipped relative to the requested "
-            "hours/days (summary mode caps at 6 hourly / 2 daily)."
+            "True iff returned_hours < requested_hours or returned_days < "
+            "requested_days. Most often this means summary-mode caps kicked "
+            "in (6 hourly / 2 daily); an upstream shortfall in detailed "
+            "mode also flips this true. See truncation_hint when summary "
+            "caps were the cause."
         ),
     )
     requested_hours: int | None = Field(
