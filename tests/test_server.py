@@ -926,6 +926,72 @@ class TestRelaxedSchema:
         assert "station_id" in st["required"]
         assert "name" in st["required"]
 
+
+# -- Tests for output schema additionalProperties lockdown --
+
+
+def _walk_object_schemas(node):
+    """Yield every dict in a JSON Schema tree that has type=='object'."""
+    if isinstance(node, dict):
+        if node.get("type") == "object":
+            yield node
+        for value in node.values():
+            yield from _walk_object_schemas(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _walk_object_schemas(item)
+
+
+class TestSchemaAdditionalPropertiesLockdown:
+    """Verify that every object schema published in tool output schemas
+    sets additionalProperties: false (F4 from the audit). Locking the
+    output schema lets clients detect drift if a response sprouts a field
+    that wasn't in the contract; the runtime Pydantic models stay
+    permissive so benign upstream additions still parse and are dropped
+    on serialization.
+    """
+
+    def test_forecast_schema_locked_recursively(self):
+        objects = list(_walk_object_schemas(_FORECAST_SCHEMA))
+        assert objects, "expected at least one object schema in _FORECAST_SCHEMA"
+        for obj in objects:
+            assert obj.get("additionalProperties") is False, obj.get("title", obj)
+
+    def test_observation_schema_locked_recursively(self):
+        objects = list(_walk_object_schemas(_OBSERVATION_SCHEMA))
+        assert objects
+        for obj in objects:
+            assert obj.get("additionalProperties") is False, obj.get("title", obj)
+
+    def test_stations_schema_locked_recursively(self):
+        objects = list(_walk_object_schemas(_STATIONS_SCHEMA))
+        assert objects
+        for obj in objects:
+            assert obj.get("additionalProperties") is False, obj.get("title", obj)
+
+    def test_station_schema_locked_recursively(self):
+        objects = list(_walk_object_schemas(_STATION_SCHEMA))
+        assert objects
+        for obj in objects:
+            assert obj.get("additionalProperties") is False, obj.get("title", obj)
+
+    def test_runtime_models_remain_permissive(self):
+        """Ingest must NOT forbid extras — upstream additions to the
+        WeatherFlow API should be silently dropped, not raise."""
+        from mcp_server_tempest.models import (
+            ForecastResponse,
+            ObservationResponse,
+            StationsResponse,
+            WeatherStation,
+        )
+
+        for model in (ForecastResponse, ObservationResponse, StationsResponse, WeatherStation):
+            extra = model.model_config.get("extra")
+            assert extra in (None, "ignore"), (
+                f"{model.__name__} must keep extra='ignore' (got {extra!r}) so "
+                "upstream WeatherFlow additions don't break ingest"
+            )
+
         # Station: same for single station root
         assert "created_epoch" not in _STATION_SCHEMA.get("required", [])
         assert "station_id" in _STATION_SCHEMA["required"]
