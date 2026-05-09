@@ -1026,14 +1026,10 @@ class TestToolErrorDocstrings:
     so `get_stations` is the only tool that excludes it.
     """
 
-    SHARED_CODES = (
-        "auth_missing",
-        "auth_invalid",
-        "auth_forbidden",
-        "rate_limited",
-        "upstream_unavailable",
-        "upstream_invalid_response",
-        "internal_error",
+    # Sourced from the ErrorCode enum so a rename or removal in errors.py
+    # surfaces as a test failure here, not as a stale string literal.
+    SHARED_CODES = tuple(
+        code.value for code in ErrorCode if code is not ErrorCode.STATION_NOT_FOUND
     )
 
     def test_get_stations_lists_codes(self):

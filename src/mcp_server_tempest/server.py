@@ -562,12 +562,15 @@ async def get_stations(
     devices, and capabilities. Admin/internal fields are excluded.
 
     Errors:
-    - auth_missing, auth_invalid, auth_forbidden — credential issues;
-      check WEATHERFLOW_API_TOKEN
+    - auth_missing — WEATHERFLOW_API_TOKEN env var not set
+    - auth_invalid — token rejected; regenerate at
+      https://tempestwx.com/settings/tokens
+    - auth_forbidden — token lacks access (scope or ownership)
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
     - upstream_invalid_response — WeatherFlow returned something unparseable
-    - internal_error — server bug; report at issues URL
+    - internal_error — server bug; report at
+      https://github.com/briandconnelly/mcp-server-tempest/issues
     """
 
     async def _work() -> dict:
@@ -606,13 +609,16 @@ async def get_station_details(
     metadata. Rarely needed if the user only asked about weather.
 
     Errors:
-    - auth_missing, auth_invalid, auth_forbidden — credential issues;
-      check WEATHERFLOW_API_TOKEN
+    - auth_missing — WEATHERFLOW_API_TOKEN env var not set
+    - auth_invalid — token rejected; regenerate at
+      https://tempestwx.com/settings/tokens
+    - auth_forbidden — token lacks access to this station; verify ownership
     - station_not_found — invalid station_id; call get_stations
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
     - upstream_invalid_response — WeatherFlow returned something unparseable
-    - internal_error — server bug; report at issues URL
+    - internal_error — server bug; report at
+      https://github.com/briandconnelly/mcp-server-tempest/issues
     """
 
     async def _work() -> dict:
@@ -689,13 +695,16 @@ async def get_forecast(
     configured units — read 'units' in the response.
 
     Errors:
-    - auth_missing, auth_invalid, auth_forbidden — credential issues;
-      check WEATHERFLOW_API_TOKEN
+    - auth_missing — WEATHERFLOW_API_TOKEN env var not set
+    - auth_invalid — token rejected; regenerate at
+      https://tempestwx.com/settings/tokens
+    - auth_forbidden — token lacks access to this station; verify ownership
     - station_not_found — invalid station_id; call get_stations
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
     - upstream_invalid_response — WeatherFlow returned something unparseable
-    - internal_error — server bug; report at issues URL
+    - internal_error — server bug; report at
+      https://github.com/briandconnelly/mcp-server-tempest/issues
     """
 
     async def _work() -> dict:
@@ -757,13 +766,16 @@ async def get_observation(
     'station_units' in the response.
 
     Errors:
-    - auth_missing, auth_invalid, auth_forbidden — credential issues;
-      check WEATHERFLOW_API_TOKEN
+    - auth_missing — WEATHERFLOW_API_TOKEN env var not set
+    - auth_invalid — token rejected; regenerate at
+      https://tempestwx.com/settings/tokens
+    - auth_forbidden — token lacks access to this station; verify ownership
     - station_not_found — invalid station_id; call get_stations
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
     - upstream_invalid_response — WeatherFlow returned something unparseable
-    - internal_error — server bug; report at issues URL
+    - internal_error — server bug; report at
+      https://github.com/briandconnelly/mcp-server-tempest/issues
     """
 
     async def _work() -> dict:
