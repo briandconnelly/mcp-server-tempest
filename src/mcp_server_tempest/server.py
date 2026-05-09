@@ -44,9 +44,20 @@ import secrets
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 from typing import Annotated, TypeVar
 
 from cachetools import TTLCache
+
+# Capability fingerprint source. Read directly from the installed dist-info,
+# not from `__init__.__version__`, because `__init__` imports `server.mcp` and
+# the reverse import would be circular. Falls back to "unknown" when the
+# package is not installed (e.g. running from a source checkout without
+# `uv sync` / `pip install -e .`).
+try:
+    _PKG_VERSION = version("mcp-server-tempest")
+except PackageNotFoundError:
+    _PKG_VERSION = "unknown"
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
@@ -187,7 +198,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
 
 # Create the MCP server
 mcp = FastMCP(
-    name="WeatherFlow Tempest API Server",
+    name="WeatherFlow Tempest",
     instructions="""\
 WeatherFlow Tempest — read-only access to a user's personal Tempest weather
 station(s). Not a global weather service.
@@ -249,9 +260,13 @@ TYPICAL WORKFLOW:
 SETUP (required):
 - WEATHERFLOW_API_TOKEN — get one at https://tempestwx.com/settings/tokens.
 
+SERVER SURFACE: mcp-server-tempest@{version} — bumps with any change to the
+tool list, tool schemas, error codes, or instructions. Cached clients can
+short-circuit re-discovery when this string is unchanged.
+
 TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
 `uvx`) speaks MCP over stdio.
-""",
+""".format(version=_PKG_VERSION),
     lifespan=lifespan,
     on_duplicate="error",
 )
