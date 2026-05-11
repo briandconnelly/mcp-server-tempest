@@ -1,7 +1,7 @@
 """End-to-end boundary tests for the structured-error contract.
 
-These exercise the public tool surface (get_stations, get_station_details,
-get_forecast, get_observation) and assert against the JSON payload that
+These exercise the public tool surface (tempest_get_stations, tempest_get_station_details,
+tempest_get_forecast, tempest_get_observation) and assert against the JSON payload that
 clients actually receive in ToolError.args[0]. Patches target
 `mcp_server_tempest.server.api_*` because server.py rebinds the import
 (see tests/test_server.py:324, 346, 447, 456, 569 for the convention).
@@ -19,10 +19,10 @@ import mcp_server_tempest.server as server_module
 from mcp_server_tempest.errors import ErrorCode, WeatherFlowError
 from mcp_server_tempest.server import (
     cache,
-    get_forecast,
-    get_observation,
-    get_station_details,
-    get_stations,
+    tempest_get_forecast,
+    tempest_get_observation,
+    tempest_get_station_details,
+    tempest_get_stations,
 )
 
 
@@ -64,7 +64,7 @@ async def _payload_from(coro_factory):
 class TestAuthMissingBoundary:
     async def test_unset_env_var(self):
         with patch.dict(os.environ, {}, clear=True):
-            payload = await _payload_from(lambda: get_stations())
+            payload = await _payload_from(lambda: tempest_get_stations())
         assert payload["code"] == "auth_missing"
         assert payload["temporary"] is False
         assert "WEATHERFLOW_API_TOKEN" in payload["message"]
@@ -82,7 +82,7 @@ class TestAuthInvalidBoundary:
                 hint="get a new one",
             ),
         ):
-            payload = await _payload_from(lambda: get_stations())
+            payload = await _payload_from(lambda: tempest_get_stations())
         assert payload["code"] == "auth_invalid"
         assert payload["hint"] == "get a new one"
 
@@ -95,12 +95,12 @@ class TestAuthForbiddenBoundary:
                 code=ErrorCode.AUTH_FORBIDDEN,
                 message="no access",
                 hint="verify ownership",
-                next={"tool": "get_stations"},
+                next={"tool": "tempest_get_stations"},
             ),
         ):
-            payload = await _payload_from(lambda: get_observation(station_id=12345))
+            payload = await _payload_from(lambda: tempest_get_observation(station_id=12345))
         assert payload["code"] == "auth_forbidden"
-        assert payload["next"] == {"tool": "get_stations"}
+        assert payload["next"] == {"tool": "tempest_get_stations"}
 
     async def test_403_on_get_stations_no_next(self):
         with patch(
@@ -111,7 +111,7 @@ class TestAuthForbiddenBoundary:
                 hint="verify token scope",
             ),
         ):
-            payload = await _payload_from(lambda: get_stations())
+            payload = await _payload_from(lambda: tempest_get_stations())
         assert payload["code"] == "auth_forbidden"
         assert "next" not in payload
 
@@ -123,17 +123,17 @@ class TestStationNotFoundBoundary:
             side_effect=WeatherFlowError(
                 code=ErrorCode.STATION_NOT_FOUND,
                 message="not found",
-                hint="call get_stations",
+                hint="call tempest_get_stations",
                 field_name="station_id",
                 value=99999,
-                next={"tool": "get_stations"},
+                next={"tool": "tempest_get_stations"},
             ),
         ):
-            payload = await _payload_from(lambda: get_observation(station_id=99999))
+            payload = await _payload_from(lambda: tempest_get_observation(station_id=99999))
         assert payload["code"] == "station_not_found"
         assert payload["field"] == "station_id"
         assert payload["value"] == 99999
-        assert payload["next"] == {"tool": "get_stations"}
+        assert payload["next"] == {"tool": "tempest_get_stations"}
 
 
 class TestRateLimitedBoundary:
@@ -147,7 +147,7 @@ class TestRateLimitedBoundary:
                 retry_after_ms=5000,
             ),
         ):
-            payload = await _payload_from(lambda: get_forecast(station_id=12345))
+            payload = await _payload_from(lambda: tempest_get_forecast(station_id=12345))
         assert payload["code"] == "rate_limited"
         assert payload["temporary"] is True
         assert payload["retry_after_ms"] == 5000
@@ -163,7 +163,7 @@ class TestUpstreamUnavailableBoundary:
                 hint="retry shortly",
             ),
         ):
-            payload = await _payload_from(lambda: get_observation(station_id=12345))
+            payload = await _payload_from(lambda: tempest_get_observation(station_id=12345))
         assert payload["code"] == "upstream_unavailable"
         assert payload["temporary"] is True
 
@@ -179,7 +179,7 @@ class TestUpstreamInvalidResponseBoundary:
                 details={"exception_type": "ValueError"},
             ),
         ):
-            payload = await _payload_from(lambda: get_observation(station_id=12345))
+            payload = await _payload_from(lambda: tempest_get_observation(station_id=12345))
         assert payload["code"] == "upstream_invalid_response"
         assert payload["temporary"] is False
         assert payload["details"]["exception_type"] == "ValueError"
@@ -191,7 +191,7 @@ class TestInternalErrorBoundary:
             "mcp_server_tempest.server.api_get_observation",
             side_effect=ValueError("internal kaboom secret"),
         ):
-            payload = await _payload_from(lambda: get_observation(station_id=12345))
+            payload = await _payload_from(lambda: tempest_get_observation(station_id=12345))
         assert payload["code"] == "internal_error"
         assert "kaboom" not in payload["message"]
         assert "kaboom" not in payload.get("hint", "")
@@ -203,10 +203,10 @@ class TestInternalErrorBoundary:
 @pytest.mark.parametrize(
     "tool_callable, kwargs, helper_name",
     [
-        (get_stations, {}, "_get_stations_data"),
-        (get_station_details, {"station_id": 12345}, "_get_station_details_data"),
-        (get_forecast, {"station_id": 12345}, "_get_forecast_data"),
-        (get_observation, {"station_id": 12345}, "_get_observation_data"),
+        (tempest_get_stations, {}, "_get_stations_data"),
+        (tempest_get_station_details, {"station_id": 12345}, "_get_station_details_data"),
+        (tempest_get_forecast, {"station_id": 12345}, "_get_forecast_data"),
+        (tempest_get_observation, {"station_id": 12345}, "_get_observation_data"),
     ],
 )
 async def test_every_tool_wraps_in_dispatch(tool_callable, kwargs, helper_name):

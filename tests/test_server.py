@@ -33,6 +33,10 @@ from mcp_server_tempest.server import (
     health_check,
     lifespan,
     mcp,
+    tempest_get_forecast,
+    tempest_get_observation,
+    tempest_get_station_details,
+    tempest_get_stations,
 )
 
 # -- Sample data fixtures for mocking API responses --
@@ -1142,10 +1146,10 @@ class TestServerInstructions:
     def test_instructions_lists_each_tool(self):
         text = mcp.instructions
         for tool_name in (
-            "get_stations",
-            "get_station_details",
-            "get_observation",
-            "get_forecast",
+            "tempest_get_stations",
+            "tempest_get_station_details",
+            "tempest_get_observation",
+            "tempest_get_forecast",
         ):
             assert tool_name in text, f"{tool_name} missing from instructions"
 
@@ -1208,6 +1212,17 @@ class TestMcpRegistry:
     """
 
     EXPECTED_TOOLS = {
+        "tempest_get_stations",
+        "tempest_get_station_details",
+        "tempest_get_forecast",
+        "tempest_get_observation",
+        "get_stations",
+        "get_station_details",
+        "get_forecast",
+        "get_observation",
+    }
+
+    DEPRECATED_TOOLS = {
         "get_stations",
         "get_station_details",
         "get_forecast",
@@ -1222,6 +1237,13 @@ class TestMcpRegistry:
     async def test_registered_tools_match_expected(self):
         names = {t.name for t in await mcp.list_tools()}
         assert names == self.EXPECTED_TOOLS
+
+    async def test_old_tool_names_are_marked_deprecated(self):
+        tools = {t.name: t for t in await mcp.list_tools()}
+        for name in self.DEPRECATED_TOOLS:
+            description = getattr(tools[name], "description", "") or ""
+            assert "Deprecated" in description
+            assert f"tempest_{name}" in description
 
     async def test_removed_tools_not_registered(self):
         names = {t.name for t in await mcp.list_tools()}
@@ -1244,7 +1266,7 @@ class TestToolErrorDocstrings:
 
     The canonical code set is `errors.ErrorCode`. `station_not_found` is
     only reachable from station-scoped operations (rest.py:_STATION_SCOPED),
-    so `get_stations` is the only tool that excludes it.
+    so `tempest_get_stations` is the only primary tool that excludes it.
     """
 
     # Sourced from the ErrorCode enum so a rename or removal in errors.py
@@ -1254,20 +1276,20 @@ class TestToolErrorDocstrings:
     )
 
     def test_get_stations_lists_codes(self):
-        doc = get_stations.__doc__ or ""
+        doc = tempest_get_stations.__doc__ or ""
         assert "Errors:" in doc
         for code in self.SHARED_CODES:
-            assert code in doc, f"{code!r} missing from get_stations docstring"
+            assert code in doc, f"{code!r} missing from tempest_get_stations docstring"
         assert "station_not_found" not in doc, (
-            "get_stations cannot return station_not_found — operation 'stations' "
+            "tempest_get_stations cannot return station_not_found — operation 'stations' "
             "is not in rest.py:_STATION_SCOPED"
         )
 
     def test_station_scoped_tools_list_codes(self):
         for tool, name in (
-            (get_station_details, "get_station_details"),
-            (get_forecast, "get_forecast"),
-            (get_observation, "get_observation"),
+            (tempest_get_station_details, "tempest_get_station_details"),
+            (tempest_get_forecast, "tempest_get_forecast"),
+            (tempest_get_observation, "tempest_get_observation"),
         ):
             doc = tool.__doc__ or ""
             assert "Errors:" in doc, f"{name} missing Errors: block"

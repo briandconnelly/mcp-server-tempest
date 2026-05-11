@@ -369,7 +369,7 @@ class ForecastResponse(BaseModel):
     timezone: str = Field(description="IANA timezone identifier", examples=["America/Los_Angeles"])
     timezone_offset_minutes: int = Field(description="UTC offset in minutes")
     units: Units = Field(description="Unit specifications for all measurements")
-    # Truncation transparency. Populated by the get_forecast tool, not the
+    # Truncation transparency. Populated by the tempest_get_forecast tool, not the
     # upstream API; defaults keep `ForecastResponse(**raw_upstream)` working.
     truncated: bool = Field(
         default=False,

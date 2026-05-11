@@ -60,17 +60,17 @@ class TestWeatherFlowErrorPayload:
         wfe = WeatherFlowError(
             code=ErrorCode.STATION_NOT_FOUND,
             message="no such station",
-            hint="call get_stations",
+            hint="call tempest_get_stations",
             field_name="station_id",
             value=99999,
-            next={"tool": "get_stations"},
+            next={"tool": "tempest_get_stations"},
             details={"upstream_status": 404, "operation": "observation"},
         )
         payload = wfe.to_payload("rid")
-        assert payload["hint"] == "call get_stations"
+        assert payload["hint"] == "call tempest_get_stations"
         assert payload["field"] == "station_id"  # JSON key is "field", attr is field_name
         assert payload["value"] == 99999
-        assert payload["next"] == {"tool": "get_stations"}
+        assert payload["next"] == {"tool": "tempest_get_stations"}
         assert payload["details"] == {"upstream_status": 404, "operation": "observation"}
 
     def test_optional_fields_omitted_when_none(self):
@@ -131,10 +131,10 @@ class TestWeatherFlowErrorToolError:
         wfe = WeatherFlowError(
             code=ErrorCode.STATION_NOT_FOUND,
             message="no such station",
-            hint="call get_stations",
+            hint="call tempest_get_stations",
             field_name="station_id",
             value=99999,
-            next={"tool": "get_stations"},
+            next={"tool": "tempest_get_stations"},
             retry_after_ms=None,
             details={"upstream_status": 404, "operation": "observation"},
         )
@@ -142,5 +142,5 @@ class TestWeatherFlowErrorToolError:
         assert parsed["code"] == "station_not_found"
         assert parsed["field"] == "station_id"
         assert parsed["value"] == 99999
-        assert parsed["next"] == {"tool": "get_stations"}
+        assert parsed["next"] == {"tool": "tempest_get_stations"}
         assert parsed["details"]["operation"] == "observation"

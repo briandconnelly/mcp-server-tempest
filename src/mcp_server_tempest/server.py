@@ -24,17 +24,17 @@ Environment Variables:
     WEATHERFLOW_DISK_CACHE_TTL: Disk cache TTL in seconds (default: 86400).
         Per-token JSON files under
         platformdirs.user_cache_dir("mcp-server-tempest").
-        Used by get_stations and get_station_details.
+        Used by tempest_get_stations and tempest_get_station_details.
 
 Example Usage:
     # Get available stations
-    stations = await client.call_tool("get_stations")
+    stations = await client.call_tool("tempest_get_stations")
 
     # Get current conditions for a specific station
-    conditions = await client.call_tool("get_observation", {"station_id": 12345})
+    conditions = await client.call_tool("tempest_get_observation", {"station_id": 12345})
 
     # Get the forecast
-    forecast = await client.call_tool("get_forecast", {"station_id": 12345})
+    forecast = await client.call_tool("tempest_get_forecast", {"station_id": 12345})
 """
 
 import json
@@ -219,19 +219,23 @@ DO NOT USE for:
 - Historical analysis beyond what the live API returns (no archive)
 
 TOOL SELECTION:
-- "How many / list my stations"              -> get_stations
-- "Deeper config / hardware for one station" -> get_station_details(station_id)
-- "Current conditions / right now"           -> get_observation(station_id)
-- "Forecast / later / tomorrow / this week"  -> get_forecast(station_id)
+- "How many / list my stations"              -> tempest_get_stations
+- "Deeper config / hardware for one station" -> tempest_get_station_details(station_id)
+- "Current conditions / right now"           -> tempest_get_observation(station_id)
+- "Forecast / later / tomorrow / this week"  -> tempest_get_forecast(station_id)
+
+DEPRECATED ALIASES:
+- get_stations, get_station_details, get_observation, and get_forecast remain
+  callable during the 1.0 transition window. Prefer the tempest_* names above.
 
 NOTES:
 - Units follow each station's config — read 'station_units' / 'units' fields.
   Never assume °F vs °C or mph vs km/h.
-- get_stations already returns devices and capabilities — only call
-  get_station_details for the deeper per-station record.
-- get_forecast also returns a current snapshot, but get_observation is
+- tempest_get_stations already returns devices and capabilities — only call
+  tempest_get_station_details for the deeper per-station record.
+- tempest_get_forecast also returns a current snapshot, but tempest_get_observation is
   lighter for current-only questions.
-- get_forecast in summary mode (default) caps at 6 hourly / 2 daily; pass
+- tempest_get_forecast in summary mode (default) caps at 6 hourly / 2 daily; pass
   detailed=True for full ranges. The response carries `truncated`,
   `requested_*`, `returned_*`, and `truncation_hint` so clients can
   detect clipping structurally.
@@ -240,17 +244,17 @@ AMBIENT STATE (affects freshness and cache repair):
 - WEATHERFLOW_CACHE_TTL (default 300s) and WEATHERFLOW_CACHE_SIZE
   (default 100): in-memory cache used by all four tools.
 - WEATHERFLOW_DISK_CACHE_TTL (default 86400s): disk cache for
-  get_stations and get_station_details only. Survives restarts; per-token
+  tempest_get_stations and tempest_get_station_details only. Survives restarts; per-token
   subdirectory (hash-keyed for account isolation) under
   platformdirs.user_cache_dir("mcp-server-tempest").
 - To force fresh data: restart the server (clears in-memory) or delete
   the cache directory above (clears disk).
 
 TYPICAL WORKFLOW:
-1. If you don't already have a station_id, call get_stations first.
+1. If you don't already have a station_id, call tempest_get_stations first.
    Station ids are not guessable — don't fabricate one.
-2. Then get_observation(station_id) or get_forecast(station_id).
-   If get_stations returned one station, use it without asking.
+2. Then tempest_get_observation(station_id) or tempest_get_forecast(station_id).
+   If tempest_get_stations returned one station, use it without asking.
 
 SETUP (required):
 - WEATHERFLOW_API_TOKEN — get one at https://tempestwx.com/settings/tokens.
@@ -587,17 +591,17 @@ async def _get_observation_data(
     },
     output_schema=_STATIONS_SCHEMA,
 )
-async def get_stations(
+async def tempest_get_stations(
     ctx: Context | None = None,
 ) -> dict:
     """List the user's weather stations.
 
     Use when: station_id is unknown, or for general inventory ("what
     stations do I have", "where", "what devices"). Covers most
-    inventory questions without a follow-up call to get_station_details.
+    inventory questions without a follow-up call to tempest_get_station_details.
 
-    Don't use for: current conditions (-> get_observation) or forecasts
-    (-> get_forecast).
+    Don't use for: current conditions (-> tempest_get_observation) or forecasts
+    (-> tempest_get_forecast).
 
     Output: list of stations with id, name, location (lat, lon, timezone),
     devices, and capabilities. Admin/internal fields are excluded.
@@ -631,7 +635,7 @@ async def get_stations(
     },
     output_schema=_STATION_SCHEMA,
 )
-async def get_station_details(
+async def tempest_get_station_details(
     station_id: Annotated[int, Field(description="The station ID to get information for", gt=0)],
     ctx: Context | None = None,
 ) -> dict:
@@ -641,9 +645,9 @@ async def get_station_details(
     have"), location ("where is my station", "elevation", "what's my
     timezone"), or station-level metadata.
 
-    Don't use for: weather data (-> get_observation, -> get_forecast).
+    Don't use for: weather data (-> tempest_get_observation, -> tempest_get_forecast).
 
-    Workflow: requires station_id from get_stations.
+    Workflow: requires station_id from tempest_get_stations.
 
     Output: detailed station record — devices, sensor capabilities, location,
     metadata. Rarely needed if the user only asked about weather.
@@ -653,7 +657,7 @@ async def get_station_details(
     - auth_invalid — token rejected; regenerate at
       https://tempestwx.com/settings/tokens
     - auth_forbidden — token lacks access to this station; verify ownership
-    - station_not_found — invalid station_id; call get_stations
+    - station_not_found — invalid station_id; call tempest_get_stations
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
     - upstream_invalid_response — WeatherFlow returned something unparseable
@@ -678,7 +682,7 @@ async def get_station_details(
     },
     output_schema=_FORECAST_SCHEMA,
 )
-async def get_forecast(
+async def tempest_get_forecast(
     station_id: Annotated[
         int, Field(description="The ID of the station to get forecast for", gt=0)
     ],
@@ -715,11 +719,11 @@ async def get_forecast(
     Use when: user asks about future weather ("will it rain tomorrow", "this
     weekend", "10-day forecast", "next few hours").
 
-    Don't use for: current-only questions when get_observation will do —
+    Don't use for: current-only questions when tempest_get_observation will do —
     this returns a much larger response. If you need both current AND
     future, this tool covers both in one call.
 
-    Workflow: requires station_id from get_stations. Summary mode (default)
+    Workflow: requires station_id from tempest_get_stations. Summary mode (default)
     caps at 6 hourly / 2 daily; pass detailed=True for full ranges. The
     response carries `truncated` and `truncation_hint` so clients can
     detect clipping without parsing this prose.
@@ -732,7 +736,7 @@ async def get_forecast(
     - auth_invalid — token rejected; regenerate at
       https://tempestwx.com/settings/tokens
     - auth_forbidden — token lacks access to this station; verify ownership
-    - station_not_found — invalid station_id; call get_stations
+    - station_not_found — invalid station_id; call tempest_get_stations
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
     - upstream_invalid_response — WeatherFlow returned something unparseable
@@ -796,7 +800,7 @@ async def get_forecast(
     },
     output_schema=_OBSERVATION_SCHEMA,
 )
-async def get_observation(
+async def tempest_get_observation(
     station_id: Annotated[
         int, Field(description="The ID of the station to get observations for", gt=0)
     ],
@@ -814,14 +818,14 @@ async def get_observation(
     solar/UV, and lightning.
 
     Use when: the user asks about right-now conditions ("how warm is it",
-    "is it raining", "any lightning"). Lighter and faster than get_forecast
+    "is it raining", "any lightning"). Lighter and faster than tempest_get_forecast
     for current-only questions.
 
-    Don't use for: future weather (-> get_forecast). Don't pass detailed=True
+    Don't use for: future weather (-> tempest_get_forecast). Don't pass detailed=True
     unless the user explicitly asks for full sensor data (heat index, wet
     bulb, air density, etc.) — the default summary is what most answers need.
 
-    Workflow: requires station_id from get_stations.
+    Workflow: requires station_id from tempest_get_stations.
 
     Output: current observations in the station's configured units — read
     'station_units' in the response.
@@ -831,7 +835,7 @@ async def get_observation(
     - auth_invalid — token rejected; regenerate at
       https://tempestwx.com/settings/tokens
     - auth_forbidden — token lacks access to this station; verify ownership
-    - station_not_found — invalid station_id; call get_stations
+    - station_not_found — invalid station_id; call tempest_get_stations
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
     - upstream_invalid_response — WeatherFlow returned something unparseable
@@ -853,6 +857,174 @@ async def get_observation(
         return result
 
     return await _dispatch(_work)
+
+
+@mcp.tool(
+    tags={"weather", "stations"},
+    annotations={
+        "title": "Deprecated: Get Weather Stations",
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
+    output_schema=_STATIONS_SCHEMA,
+)
+async def get_stations(
+    ctx: Context | None = None,
+) -> dict:
+    """Deprecated: use tempest_get_stations.
+
+    Backward-compatible alias for the 1.0 deprecation window.
+
+    Errors:
+    - auth_missing
+    - auth_invalid
+    - auth_forbidden
+    - rate_limited
+    - upstream_unavailable
+    - upstream_invalid_response
+    - internal_error
+    """
+
+    return await tempest_get_stations(ctx=ctx)
+
+
+@mcp.tool(
+    tags={"weather", "stations"},
+    annotations={
+        "title": "Deprecated: Get Weather Station Information",
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
+    output_schema=_STATION_SCHEMA,
+)
+async def get_station_details(
+    station_id: Annotated[int, Field(description="The station ID to get information for", gt=0)],
+    ctx: Context | None = None,
+) -> dict:
+    """Deprecated: use tempest_get_station_details.
+
+    Backward-compatible alias for the 1.0 deprecation window.
+
+    Errors:
+    - auth_missing
+    - auth_invalid
+    - auth_forbidden
+    - station_not_found
+    - rate_limited
+    - upstream_unavailable
+    - upstream_invalid_response
+    - internal_error
+    """
+
+    return await tempest_get_station_details(station_id=station_id, ctx=ctx)
+
+
+@mcp.tool(
+    tags={"weather", "forecast"},
+    annotations={
+        "title": "Deprecated: Get Weather Forecast for a Station",
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
+    output_schema=_FORECAST_SCHEMA,
+)
+async def get_forecast(
+    station_id: Annotated[
+        int, Field(description="The ID of the station to get forecast for", gt=0)
+    ],
+    hours: Annotated[
+        int,
+        Field(
+            default=12,
+            description="Hourly forecasts to return. Capped at 6 in summary mode.",
+            ge=1,
+            le=48,
+        ),
+    ] = 12,
+    days: Annotated[
+        int,
+        Field(
+            default=5,
+            description="Daily forecasts to return. Capped at 2 in summary mode.",
+            ge=1,
+            le=10,
+        ),
+    ] = 5,
+    detailed: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="If true, return full response. Default is a condensed summary.",
+        ),
+    ] = False,
+    ctx: Context | None = None,
+) -> dict:
+    """Deprecated: use tempest_get_forecast.
+
+    Backward-compatible alias for the 1.0 deprecation window.
+
+    Errors:
+    - auth_missing
+    - auth_invalid
+    - auth_forbidden
+    - station_not_found
+    - rate_limited
+    - upstream_unavailable
+    - upstream_invalid_response
+    - internal_error
+    """
+
+    return await tempest_get_forecast(
+        station_id=station_id,
+        hours=hours,
+        days=days,
+        detailed=detailed,
+        ctx=ctx,
+    )
+
+
+@mcp.tool(
+    tags={"weather", "observations"},
+    annotations={
+        "title": "Deprecated: Get Current Weather Observations for a Station",
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
+    output_schema=_OBSERVATION_SCHEMA,
+)
+async def get_observation(
+    station_id: Annotated[
+        int, Field(description="The ID of the station to get observations for", gt=0)
+    ],
+    detailed: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="If true, return full response. Default is a condensed summary.",
+        ),
+    ] = False,
+    ctx: Context | None = None,
+) -> dict:
+    """Deprecated: use tempest_get_observation.
+
+    Backward-compatible alias for the 1.0 deprecation window.
+
+    Errors:
+    - auth_missing
+    - auth_invalid
+    - auth_forbidden
+    - station_not_found
+    - rate_limited
+    - upstream_unavailable
+    - upstream_invalid_response
+    - internal_error
+    """
+
+    return await tempest_get_observation(station_id=station_id, detailed=detailed, ctx=ctx)
 
 
 @mcp.custom_route("/health", methods=["GET"])
