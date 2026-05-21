@@ -1208,10 +1208,10 @@ class TestMcpRegistry:
     """
 
     EXPECTED_TOOLS = {
-        "get_stations",
-        "get_station_details",
-        "get_forecast",
-        "get_observation",
+        "tempest_get_stations",
+        "tempest_get_station_details",
+        "tempest_get_forecast",
+        "tempest_get_observation",
     }
 
     REMOVED_TOOLS = {
