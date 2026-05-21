@@ -44,12 +44,17 @@ import os
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
-from typing import Annotated, Any, TypeVar
+from time import time as _now
+from typing import Annotated, Any, Generic, TypeVar
 
 from cachetools import TTLCache
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.tools.base import ToolResult
+from jsonschema import Draft202012Validator
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -156,6 +161,36 @@ cache = TTLCache(
     ttl=_int_env("WEATHERFLOW_CACHE_TTL", 300),
 )
 
+# Epoch seconds of the last upstream fetch per cache key. A bounded TTLCache
+# (same shape as the data cache) so it cannot leak relative to it; if an entry
+# expires before its data, ts_retrieved is simply omitted on that hit.
+_fetch_times: TTLCache = TTLCache(
+    maxsize=_int_env("WEATHERFLOW_CACHE_SIZE", 100),
+    ttl=_int_env("WEATHERFLOW_CACHE_TTL", 300),
+)
+
+
+@dataclass
+class Fetched(Generic[T]):
+    """A model plus where it came from, for response _meta."""
+
+    data: T
+    cache: str  # "memory" | "disk" | "miss"
+    ts_epoch: float | None
+
+
+def _iso(ts_epoch: float | None) -> str | None:
+    return None if ts_epoch is None else datetime.fromtimestamp(ts_epoch, tz=UTC).isoformat()
+
+
+def _meta_for(fetched: Fetched) -> dict:
+    meta: dict = {"cache": fetched.cache, "fingerprint": _FINGERPRINT}
+    iso = _iso(fetched.ts_epoch)
+    if iso is not None:
+        meta["ts_retrieved"] = iso
+    return meta
+
+
 disk_cache: DiskCache | None = None
 
 
@@ -182,12 +217,14 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
         logger.info("WeatherFlow Tempest server starting")
         dc = _get_disk_cache()
         if dc:
-            hit = dc.get("stations", StationsResponse)
+            hit = dc.get_with_age("stations", StationsResponse)
             if hit is not None:
-                cache["stations"] = hit
+                model, ts = hit
+                cache["stations"] = model
+                _fetch_times["stations"] = ts
                 logger.info(
                     "Pre-warmed stations cache from disk (%d stations)",
-                    len(hit.stations),
+                    len(model.stations),
                 )
     yield
 
@@ -448,6 +485,34 @@ def _compute_fingerprint() -> str:
 _FINGERPRINT = _compute_fingerprint()
 
 
+# The server skips its own output validation when a ToolResult carries _meta,
+# so we validate here against the same locked schemas before shipping. A
+# failure means the response drifted from the published contract — a server
+# bug, surfaced as internal_error rather than handed to the agent.
+_OUTPUT_VALIDATORS: dict[str, Any] = {
+    "stations": Draft202012Validator(_STATIONS_SCHEMA),
+    "station": Draft202012Validator(_STATION_SCHEMA),
+    "forecast": Draft202012Validator(_FORECAST_SCHEMA),
+    "observation": Draft202012Validator(_OBSERVATION_SCHEMA),
+}
+
+
+def _validated(schema_key: str, result: dict, fetched: Fetched) -> ToolResult:
+    errs = sorted(
+        _OUTPUT_VALIDATORS[schema_key].iter_errors(result),
+        key=lambda e: list(e.path),
+    )
+    if errs:
+        raise WeatherFlowError(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Response failed output-schema validation.",
+            hint="Server contract drift; report at "
+            "https://github.com/briandconnelly/mcp-server-tempest/issues",
+            details={"validation_error": errs[0].message},
+        )
+    return ToolResult(structured_content=result, meta=_meta_for(fetched))
+
+
 def _build_capabilities() -> dict:
     return {
         "name": "WeatherFlow Tempest",
@@ -572,39 +637,44 @@ _OBSERVATION_SUMMARY_FIELDS: set[str] = {
 }
 
 
-async def _get_stations_data(ctx: Context | None, use_cache: bool = True) -> StationsResponse:
+async def _get_stations_data(
+    ctx: Context | None, use_cache: bool = True
+) -> Fetched[StationsResponse]:
     """Shared logic for getting stations data."""
     token = _get_api_token()
 
     if use_cache and "stations" in cache:
         if ctx:
             await ctx.info("Using cached station data")
-        return cache["stations"]
+        return Fetched(cache["stations"], "memory", _fetch_times.get("stations"))
 
     dc = _get_disk_cache()
     if use_cache and dc:
-        hit = dc.get("stations", StationsResponse)
+        hit = dc.get_with_age("stations", StationsResponse)
         if hit is not None:
+            model, ts = hit
             if ctx:
                 await ctx.info("Using disk-cached station data")
-            cache["stations"] = hit
-            return hit
+            cache["stations"] = model
+            _fetch_times["stations"] = ts
+            return Fetched(model, "disk", ts)
 
     if ctx:
         await ctx.report_progress(progress=0, total=1)
         await ctx.info("Getting available stations via the Tempest API")
     result = await api_get_stations(token)
     cache["stations"] = StationsResponse(**result)
+    _fetch_times["stations"] = _now()
     if dc:
         dc.set("stations", cache["stations"])
     if ctx:
         await ctx.report_progress(progress=1, total=1)
-    return cache["stations"]
+    return Fetched(cache["stations"], "miss", _fetch_times["stations"])
 
 
 async def _get_station_details_data(
     station_id: int, ctx: Context | None, use_cache: bool = True
-) -> StationResponse:
+) -> Fetched[StationResponse]:
     """Shared logic for getting station details data."""
     token = _get_api_token()
 
@@ -613,32 +683,35 @@ async def _get_station_details_data(
     if use_cache and cache_id in cache:
         if ctx:
             await ctx.info(f"Using cached station data for station {station_id}")
-        return cache[cache_id]
+        return Fetched(cache[cache_id], "memory", _fetch_times.get(cache_id))
 
     dc = _get_disk_cache()
     if use_cache and dc:
-        hit = dc.get(cache_id, StationResponse)
+        hit = dc.get_with_age(cache_id, StationResponse)
         if hit is not None:
+            model, ts = hit
             if ctx:
                 await ctx.info(f"Using disk-cached station data for station {station_id}")
-            cache[cache_id] = hit
-            return hit
+            cache[cache_id] = model
+            _fetch_times[cache_id] = ts
+            return Fetched(model, "disk", ts)
 
     if ctx:
         await ctx.report_progress(progress=0, total=1)
         await ctx.info(f"Getting station ID data for station {station_id} via the Tempest API")
     result = await api_get_station_id(station_id, token)
     cache[cache_id] = StationResponse(**result)
+    _fetch_times[cache_id] = _now()
     if dc:
         dc.set(cache_id, cache[cache_id])
     if ctx:
         await ctx.report_progress(progress=1, total=1)
-    return cache[cache_id]
+    return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
 
 
 async def _get_forecast_data(
     station_id: int, ctx: Context | None, use_cache: bool = True
-) -> ForecastResponse:
+) -> Fetched[ForecastResponse]:
     """Shared logic for getting forecast data."""
     token = _get_api_token()
 
@@ -646,21 +719,22 @@ async def _get_forecast_data(
     if use_cache and cache_id in cache:
         if ctx:
             await ctx.info(f"Using cached forecast data for station {station_id}")
-        return cache[cache_id]
+        return Fetched(cache[cache_id], "memory", _fetch_times.get(cache_id))
 
     if ctx:
         await ctx.report_progress(progress=0, total=1)
         await ctx.info(f"Getting forecast for station {station_id} via the Tempest API")
     result = await api_get_forecast(station_id, token)
     cache[cache_id] = ForecastResponse(**result)
+    _fetch_times[cache_id] = _now()
     if ctx:
         await ctx.report_progress(progress=1, total=1)
-    return cache[cache_id]
+    return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
 
 
 async def _get_observation_data(
     station_id: int, ctx: Context | None, use_cache: bool = True
-) -> ObservationResponse:
+) -> Fetched[ObservationResponse]:
     """Shared logic for getting observation data."""
     token = _get_api_token()
 
@@ -668,16 +742,17 @@ async def _get_observation_data(
     if use_cache and cache_id in cache:
         if ctx:
             await ctx.info(f"Using cached observation data for station {station_id}")
-        return cache[cache_id]
+        return Fetched(cache[cache_id], "memory", _fetch_times.get(cache_id))
 
     if ctx:
         await ctx.report_progress(progress=0, total=1)
         await ctx.info(f"Getting observations for station {station_id} via the Tempest API")
     result = await api_get_observation(station_id, token)
     cache[cache_id] = ObservationResponse(**result)
+    _fetch_times[cache_id] = _now()
     if ctx:
         await ctx.report_progress(progress=1, total=1)
-    return cache[cache_id]
+    return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
 
 
 @mcp.tool(
@@ -693,7 +768,7 @@ async def _get_observation_data(
 )
 async def get_stations(
     ctx: Context | None = None,
-) -> dict:
+) -> ToolResult:
     """List the user's weather stations.
 
     Use when: station_id is unknown, or for general inventory ("what
@@ -723,9 +798,10 @@ async def get_stations(
     or arbitrary-location weather service.
     """
 
-    async def _work() -> dict:
-        data = await _get_stations_data(ctx)
-        return data.model_dump(exclude=_STATIONS_EXCLUDE)
+    async def _work() -> ToolResult:
+        fetched = await _get_stations_data(ctx)
+        result = fetched.data.model_dump(exclude=_STATIONS_EXCLUDE)
+        return _validated("stations", result, fetched)
 
     return await _dispatch(_work)
 
@@ -744,7 +820,7 @@ async def get_stations(
 async def get_station_details(
     station_id: Annotated[int, Field(description="The station ID to get information for", gt=0)],
     ctx: Context | None = None,
-) -> dict:
+) -> ToolResult:
     """Get configuration, devices, hardware, and location for one specific station.
 
     Use when: user asks about station hardware ("what devices does my station
@@ -776,9 +852,10 @@ async def get_station_details(
     or arbitrary-location weather service.
     """
 
-    async def _work() -> dict:
-        data = await _get_station_details_data(station_id, ctx)
-        return data.model_dump(exclude=_STATION_EXCLUDE)
+    async def _work() -> ToolResult:
+        fetched = await _get_station_details_data(station_id, ctx)
+        result = fetched.data.model_dump(exclude=_STATION_EXCLUDE)
+        return _validated("station", result, fetched)
 
     return await _dispatch(_work)
 
@@ -824,7 +901,7 @@ async def get_forecast(
         ),
     ] = False,
     ctx: Context | None = None,
-) -> dict:
+) -> ToolResult:
     """Get the weather forecast for a station — includes a current snapshot
     plus hourly and daily forecasts.
 
@@ -861,9 +938,9 @@ async def get_forecast(
     or arbitrary-location weather service.
     """
 
-    async def _work() -> dict:
-        data = await _get_forecast_data(station_id, ctx)
-        result = data.model_dump(exclude=_FORECAST_EXCLUDE, exclude_none=not detailed)
+    async def _work() -> ToolResult:
+        fetched = await _get_forecast_data(station_id, ctx)
+        result = fetched.data.model_dump(exclude=_FORECAST_EXCLUDE, exclude_none=not detailed)
 
         if detailed:
             result["forecast"]["hourly"] = result["forecast"]["hourly"][:hours]
@@ -902,7 +979,7 @@ async def get_forecast(
             # already convey.
             result.pop("truncation_hint", None)
 
-        return result
+        return _validated("forecast", result, fetched)
 
     return await _dispatch(_work)
 
@@ -930,7 +1007,7 @@ async def get_observation(
         ),
     ] = False,
     ctx: Context | None = None,
-) -> dict:
+) -> ToolResult:
     """Get the most recent weather observations from a station — current
     conditions including temperature, humidity, pressure, wind, precipitation,
     solar/UV, and lightning.
@@ -966,20 +1043,20 @@ async def get_observation(
     or arbitrary-location weather service.
     """
 
-    async def _work() -> dict:
-        data = await _get_observation_data(station_id, ctx)
+    async def _work() -> ToolResult:
+        fetched = await _get_observation_data(station_id, ctx)
 
         if detailed:
-            result = data.model_dump(exclude=_OBSERVATION_EXCLUDE)
+            result = fetched.data.model_dump(exclude=_OBSERVATION_EXCLUDE)
         else:
-            result = data.model_dump(exclude=_OBSERVATION_EXCLUDE, exclude_none=True)
+            result = fetched.data.model_dump(exclude=_OBSERVATION_EXCLUDE, exclude_none=True)
             for obs in result["obs"]:
                 for field_name in _OBSERVATION_SUMMARY_FIELDS:
                     obs.pop(field_name, None)
             for key in ("latitude", "longitude", "elevation", "is_public"):
                 result.pop(key, None)
 
-        return result
+        return _validated("observation", result, fetched)
 
     return await _dispatch(_work)
 

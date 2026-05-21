@@ -23,6 +23,7 @@ dependencies = [
     # marshmallow is the parse-failure exception class we catch in rest.py
     # (raised by weatherflow4py via dataclasses-json). Declared directly so
     # we don't depend on the transitive dep surviving an upstream refactor.
+    "jsonschema>=4.26.0",
     "marshmallow>=3.0",
     "platformdirs>=4.0",
     "pydantic>=2.11.7",
