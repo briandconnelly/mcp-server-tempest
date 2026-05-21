@@ -1611,3 +1611,34 @@ async def test_observation_meta_reports_memory_hit():
             result = await get_observation(station_id=12345)  # hit
 
     assert result.meta["cache"] == "memory"
+
+
+def test_validated_rejects_drifted_dict():
+    # Drift = a dict that violates the locked output schema. _validated must
+    # raise internal_error rather than ship it (the _meta path bypasses the
+    # server's own output validation; _validated is the safety net).
+    from mcp_server_tempest.server import Fetched, _validated
+
+    fetched = Fetched(data=None, cache="miss", ts_epoch=1.0)
+    with pytest.raises(WeatherFlowError) as exc:
+        _validated("observation", {"NOT_A_REAL_FIELD": 1}, fetched)
+    assert exc.value.code == ErrorCode.INTERNAL_ERROR
+
+
+async def test_observation_structured_content_conforms_to_advertised_schema():
+    import fastmcp
+    from jsonschema import Draft202012Validator
+
+    from mcp_server_tempest.server import mcp
+
+    with patch(
+        "mcp_server_tempest.server.api_get_observation",
+        new=AsyncMock(return_value=SAMPLE_OBSERVATION_DATA),
+    ):
+        with patch.dict(os.environ, {"WEATHERFLOW_API_TOKEN": "t"}):
+            cache.clear()
+            async with fastmcp.Client(mcp) as c:
+                tool = next(t for t in await c.list_tools() if t.name == "tempest_get_observation")
+                r = await c.call_tool("tempest_get_observation", {"station_id": 12345})
+    # The emitted structured content validates against the schema the tool advertises.
+    Draft202012Validator(tool.outputSchema).validate(r.structured_content)
