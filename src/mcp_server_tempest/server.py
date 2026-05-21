@@ -603,6 +603,8 @@ async def get_stations(
     - auth_invalid — token rejected; regenerate at
       https://tempestwx.com/settings/tokens
     - auth_forbidden — token lacks access (scope or ownership)
+    - invalid_argument — a parameter was malformed (wrong type, out of range, or
+      unknown field); fix it and retry
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
     - upstream_invalid_response — WeatherFlow returned something unparseable
@@ -649,6 +651,8 @@ async def get_station_details(
     - auth_invalid — token rejected; regenerate at
       https://tempestwx.com/settings/tokens
     - auth_forbidden — token lacks access to this station; verify ownership
+    - invalid_argument — a parameter was malformed (wrong type, out of range, or
+      unknown field); fix it and retry
     - station_not_found — invalid station_id; call get_stations
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
@@ -728,6 +732,8 @@ async def get_forecast(
     - auth_invalid — token rejected; regenerate at
       https://tempestwx.com/settings/tokens
     - auth_forbidden — token lacks access to this station; verify ownership
+    - invalid_argument — a parameter was malformed (wrong type, out of range, or
+      unknown field); fix it and retry
     - station_not_found — invalid station_id; call get_stations
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
@@ -827,6 +833,8 @@ async def get_observation(
     - auth_invalid — token rejected; regenerate at
       https://tempestwx.com/settings/tokens
     - auth_forbidden — token lacks access to this station; verify ownership
+    - invalid_argument — a parameter was malformed (wrong type, out of range, or
+      unknown field); fix it and retry
     - station_not_found — invalid station_id; call get_stations
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
