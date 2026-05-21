@@ -40,7 +40,6 @@ Example Usage:
 import json
 import logging
 import os
-import secrets
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -55,7 +54,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .cache import DiskCache
-from .errors import ErrorCode, WeatherFlowError
+from .errors import ErrorCode, WeatherFlowError, _new_request_id
 from .models import (
     ForecastResponse,
     ObservationResponse,
@@ -82,11 +81,6 @@ try:
     _PKG_VERSION = version("mcp-server-tempest")
 except PackageNotFoundError:
     _PKG_VERSION = "unknown"
-
-
-def _new_request_id() -> str:
-    """Per-call correlation id for log/error pairing. 16 hex chars (~64 bits)."""
-    return secrets.token_hex(8)
 
 
 _KNOWN_CODES: frozenset[str] = frozenset(c.value for c in ErrorCode)
