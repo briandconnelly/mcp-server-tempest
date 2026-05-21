@@ -46,24 +46,15 @@ class DiskCache:
 
     def get(self, key: str, model_class: type[T]) -> T | None:
         """Read a cached entry, returning None on miss, expiry, or error."""
-        path = self._path(key)
-        try:
-            raw = json.loads(path.read_text())
-            if time.time() - raw["timestamp"] > self.ttl:
-                path.unlink(missing_ok=True)
-                return None
-            return model_class(**raw["data"])
-        except FileNotFoundError:
-            return None
-        except Exception as e:
-            logger.warning("Disk cache read error for %s: %s", key, e)
-            return None
+        hit = self.get_with_age(key, model_class)
+        return hit[0] if hit is not None else None
 
     def get_with_age(self, key: str, model_class: type[T]) -> tuple[T, float] | None:
-        """Like get(), but also return the stored write timestamp (epoch seconds).
+        """Read a cached entry with its stored write timestamp (epoch seconds).
 
-        Returns None on miss, expiry, or error. Populates _meta.ts_retrieved so an
-        agent can judge freshness of a disk-cached response.
+        Returns the (model, timestamp) pair, or None on miss, expiry, or error.
+        The timestamp populates _meta.ts_retrieved so an agent can judge the
+        freshness of a disk-cached response.
         """
         path = self._path(key)
         try:
