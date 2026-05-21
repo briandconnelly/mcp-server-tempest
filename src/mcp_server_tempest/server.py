@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from time import time as _now
-from typing import Annotated, Any, Generic, TypeVar
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from cachetools import TTLCache
 from fastmcp import Context, FastMCP
@@ -175,7 +175,7 @@ class Fetched(Generic[T]):
     """A model plus where it came from, for response _meta."""
 
     data: T
-    cache: str  # "memory" | "disk" | "miss"
+    cache: Literal["memory", "disk", "miss"]
     ts_epoch: float | None
 
 
@@ -489,6 +489,7 @@ _FINGERPRINT = _compute_fingerprint()
 # so we validate here against the same locked schemas before shipping. A
 # failure means the response drifted from the published contract — a server
 # bug, surfaced as internal_error rather than handed to the agent.
+# values are Draft202012Validator; annotated Any because jsonschema ships no py.typed
 _OUTPUT_VALIDATORS: dict[str, Any] = {
     "stations": Draft202012Validator(_STATIONS_SCHEMA),
     "station": Draft202012Validator(_STATION_SCHEMA),
@@ -498,11 +499,15 @@ _OUTPUT_VALIDATORS: dict[str, Any] = {
 
 
 def _validated(schema_key: str, result: dict, fetched: Fetched) -> ToolResult:
-    errs = sorted(
-        _OUTPUT_VALIDATORS[schema_key].iter_errors(result),
-        key=lambda e: list(e.path),
-    )
-    if errs:
+    validator = _OUTPUT_VALIDATORS[schema_key]
+    if not validator.is_valid(result):
+        # str() each path element: paths mix str keys and int indices, and
+        # sorting heterogeneous types would raise TypeError and mask the real
+        # validation error.
+        errs = sorted(
+            validator.iter_errors(result),
+            key=lambda e: [str(x) for x in e.path],
+        )
         raise WeatherFlowError(
             code=ErrorCode.INTERNAL_ERROR,
             message="Response failed output-schema validation.",

@@ -35,10 +35,12 @@ def _set_token():
 @pytest.fixture(autouse=True)
 def _clear_cache():
     cache.clear()
+    server_module._fetch_times.clear()
     server_module.disk_cache = None
     with patch.object(server_module, "_get_disk_cache", return_value=None):
         yield
     cache.clear()
+    server_module._fetch_times.clear()
     server_module.disk_cache = None
 
 

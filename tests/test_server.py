@@ -223,10 +223,12 @@ def _structured(result):
 def _clear_cache():
     """Clear caches and disable disk cache for test isolation."""
     cache.clear()
+    server_module._fetch_times.clear()
     server_module.disk_cache = None
     with patch.object(server_module, "_get_disk_cache", return_value=None):
         yield
     cache.clear()
+    server_module._fetch_times.clear()
     server_module.disk_cache = None
 
 
