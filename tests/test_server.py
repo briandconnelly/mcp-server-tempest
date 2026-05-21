@@ -1142,10 +1142,10 @@ class TestServerInstructions:
     def test_instructions_lists_each_tool(self):
         text = mcp.instructions
         for tool_name in (
-            "get_stations",
-            "get_station_details",
-            "get_observation",
-            "get_forecast",
+            "tempest_get_stations",
+            "tempest_get_station_details",
+            "tempest_get_observation",
+            "tempest_get_forecast",
         ):
             assert tool_name in text, f"{tool_name} missing from instructions"
 
@@ -1265,9 +1265,9 @@ class TestToolErrorDocstrings:
 
     def test_station_scoped_tools_list_codes(self):
         for tool, name in (
-            (get_station_details, "get_station_details"),
-            (get_forecast, "get_forecast"),
-            (get_observation, "get_observation"),
+            (get_station_details, "tempest_get_station_details"),
+            (get_forecast, "tempest_get_forecast"),
+            (get_observation, "tempest_get_observation"),
         ):
             doc = tool.__doc__ or ""
             assert "Errors:" in doc, f"{name} missing Errors: block"
