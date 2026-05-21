@@ -55,6 +55,7 @@ from starlette.responses import JSONResponse
 
 from .cache import DiskCache
 from .errors import ErrorCode, WeatherFlowError, _new_request_id
+from .middleware import TempestContractMiddleware
 from .models import (
     ForecastResponse,
     ObservationResponse,
@@ -258,6 +259,7 @@ TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
     lifespan=lifespan,
     on_duplicate="error",
 )
+mcp.add_middleware(TempestContractMiddleware())
 
 
 def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
