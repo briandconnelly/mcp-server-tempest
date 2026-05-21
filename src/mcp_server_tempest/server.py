@@ -37,6 +37,7 @@ Example Usage:
     forecast = await client.call_tool("tempest_get_forecast", {"station_id": 12345})
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -191,10 +192,7 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
     yield
 
 
-# Create the MCP server
-mcp = FastMCP(
-    name="WeatherFlow Tempest",
-    instructions="""\
+_INSTRUCTIONS = """\
 WeatherFlow Tempest — read-only access to a user's personal Tempest weather
 station(s). Not a global weather service.
 
@@ -250,12 +248,19 @@ TYPICAL WORKFLOW:
 SETUP (required):
 - WEATHERFLOW_API_TOKEN — get one at https://tempestwx.com/settings/tokens.
 
-SERVER SURFACE: mcp-server-tempest@{version} — capability fingerprint;
-bumps on any change to tools, schemas, error codes, or instructions.
+SERVER SURFACE: mcp-server-tempest@{version}. Read tempest://capabilities for
+the structured surface summary (scope, tools, error codes, fingerprint). Each
+tool result also carries _meta.fingerprint; it changes on any tool/schema/
+error-code/instructions change.
 
 TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
 `uvx`) speaks MCP over stdio.
-""".format(version=_PKG_VERSION),
+""".format(version=_PKG_VERSION)
+
+# Create the MCP server
+mcp = FastMCP(
+    name="WeatherFlow Tempest",
+    instructions=_INSTRUCTIONS,
     lifespan=lifespan,
     on_duplicate="error",
 )
@@ -404,6 +409,108 @@ _OBSERVATION_SCHEMA = _relaxed_schema(
         },
     },
 )
+
+
+def _compute_fingerprint() -> str:
+    """Deterministic hash of the agent-visible authored surface.
+
+    Covers: package version, wire tool names, output schemas, error codes, and
+    the instructions text (scope/negative-scope/selection). Input schemas are
+    NOT hashed directly — an input-contract change requires a version bump,
+    which moves this fingerprint. Stated in capabilities.fingerprint_covers.
+    """
+    surface = json.dumps(
+        {
+            "version": _PKG_VERSION,
+            "tools": sorted(
+                [
+                    "tempest_get_stations",
+                    "tempest_get_station_details",
+                    "tempest_get_observation",
+                    "tempest_get_forecast",
+                ]
+            ),
+            "output_schemas": {
+                "stations": _STATIONS_SCHEMA,
+                "station": _STATION_SCHEMA,
+                "forecast": _FORECAST_SCHEMA,
+                "observation": _OBSERVATION_SCHEMA,
+            },
+            "error_codes": sorted(c.value for c in ErrorCode),
+            "instructions": _INSTRUCTIONS,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "sha256:" + hashlib.sha256(surface.encode()).hexdigest()[:16]
+
+
+_FINGERPRINT = _compute_fingerprint()
+
+
+def _build_capabilities() -> dict:
+    return {
+        "name": "WeatherFlow Tempest",
+        "version": _PKG_VERSION,
+        "fingerprint": _FINGERPRINT,
+        "fingerprint_covers": (
+            "version, wire tool names, output schemas, error codes, instructions. "
+            "Input-schema changes are reflected only via a version bump."
+        ),
+        "transport": "stdio",
+        "scope": (
+            "Read-only access to the user's own WeatherFlow Tempest station(s) — "
+            "not a global weather service."
+        ),
+        "not_in_scope": [
+            "Global, regional, or arbitrary-location weather — use a public weather API",
+            "Air quality, pollen, smoke index",
+            "Severe-weather alerts, radar imagery, watches/warnings",
+            "Historical/archive analysis beyond the live API",
+        ],
+        "tools": [
+            {
+                "name": "tempest_get_stations",
+                "purpose": "List the user's stations, devices, capabilities.",
+            },
+            {
+                "name": "tempest_get_station_details",
+                "purpose": "Deep config/hardware/location for one station.",
+            },
+            {
+                "name": "tempest_get_observation",
+                "purpose": "Current conditions for one station.",
+            },
+            {
+                "name": "tempest_get_forecast",
+                "purpose": "Hourly + daily forecast plus a current snapshot.",
+            },
+        ],
+        "error_codes": sorted(c.value for c in ErrorCode),
+        "timestamps": (
+            "Upstream weather timestamps are Unix epoch seconds, as provided by "
+            "WeatherFlow; interpret local-time fields with the station's IANA "
+            "`timezone`. Server-generated timestamps (e.g. _meta.ts_retrieved) "
+            "are RFC3339 UTC."
+        ),
+        "caching": (
+            "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for all tools; disk "
+            "(WEATHERFLOW_DISK_CACHE_TTL, default 86400s) for stations and "
+            "station_details. Each tool result carries _meta.cache and "
+            "_meta.ts_retrieved."
+        ),
+    }
+
+
+@mcp.resource(
+    "tempest://capabilities",
+    name="Server capabilities",
+    description="Structured summary: scope, negative scope, tools, error codes, fingerprint.",
+    mime_type="application/json",
+)
+def capabilities() -> dict:
+    return _build_capabilities()
+
 
 _STATIONS_EXCLUDE: dict = {
     "stations": {

@@ -1261,10 +1261,12 @@ class TestMcpRegistry:
         leaked = self.REMOVED_TOOLS & names
         assert not leaked, f"removed tools reintroduced: {leaked}"
 
-    async def test_no_resources_registered(self):
-        # The 0.4.0 release dropped the public weather://tempest/... resources;
-        # they should not come back without an explicit decision.
-        assert await mcp.list_resources() == []
+    async def test_capabilities_resource_registered(self):
+        # The 0.4.0 release dropped the public weather://tempest/... resources.
+        # The tempest://capabilities discovery resource was added in 0.7.0.
+        resources = await mcp.list_resources()
+        uris = {str(r.uri) for r in resources}
+        assert uris == {"tempest://capabilities"}
         assert await mcp.list_resource_templates() == []
 
 
