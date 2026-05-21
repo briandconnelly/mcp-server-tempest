@@ -611,6 +611,9 @@ async def get_stations(
     - upstream_invalid_response — WeatherFlow returned something unparseable
     - internal_error — server bug; report at
       https://github.com/briandconnelly/mcp-server-tempest/issues
+
+    Scope: the user's own WeatherFlow Tempest station(s) only — not a global
+    or arbitrary-location weather service.
     """
 
     async def _work() -> dict:
@@ -661,6 +664,9 @@ async def get_station_details(
     - upstream_invalid_response — WeatherFlow returned something unparseable
     - internal_error — server bug; report at
       https://github.com/briandconnelly/mcp-server-tempest/issues
+
+    Scope: the user's own WeatherFlow Tempest station(s) only — not a global
+    or arbitrary-location weather service.
     """
 
     async def _work() -> dict:
@@ -743,6 +749,9 @@ async def get_forecast(
     - upstream_invalid_response — WeatherFlow returned something unparseable
     - internal_error — server bug; report at
       https://github.com/briandconnelly/mcp-server-tempest/issues
+
+    Scope: the user's own WeatherFlow Tempest station(s) only — not a global
+    or arbitrary-location weather service.
     """
 
     async def _work() -> dict:
@@ -845,6 +854,9 @@ async def get_observation(
     - upstream_invalid_response — WeatherFlow returned something unparseable
     - internal_error — server bug; report at
       https://github.com/briandconnelly/mcp-server-tempest/issues
+
+    Scope: the user's own WeatherFlow Tempest station(s) only — not a global
+    or arbitrary-location weather service.
     """
 
     async def _work() -> dict:

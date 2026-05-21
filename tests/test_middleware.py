@@ -87,3 +87,10 @@ async def test_every_tool_advertises_schema_dialect():
     for t in tools:
         assert t.inputSchema.get("$schema") == DIALECT, t.name
         assert (t.outputSchema or {}).get("$schema") == DIALECT, t.name
+
+
+async def test_every_tool_description_states_station_scope():
+    async with _client() as c:
+        tools = await c.list_tools()
+    for t in tools:
+        assert "not a global" in (t.description or "").lower(), t.name
