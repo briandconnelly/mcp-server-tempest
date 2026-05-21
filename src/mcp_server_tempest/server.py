@@ -756,7 +756,7 @@ async def get_forecast(
 
     async def _work() -> dict:
         data = await _get_forecast_data(station_id, ctx)
-        result = data.model_dump(exclude=_FORECAST_EXCLUDE)
+        result = data.model_dump(exclude=_FORECAST_EXCLUDE, exclude_none=not detailed)
 
         if detailed:
             result["forecast"]["hourly"] = result["forecast"]["hourly"][:hours]
@@ -861,9 +861,11 @@ async def get_observation(
 
     async def _work() -> dict:
         data = await _get_observation_data(station_id, ctx)
-        result = data.model_dump(exclude=_OBSERVATION_EXCLUDE)
 
-        if not detailed:
+        if detailed:
+            result = data.model_dump(exclude=_OBSERVATION_EXCLUDE)
+        else:
+            result = data.model_dump(exclude=_OBSERVATION_EXCLUDE, exclude_none=True)
             for obs in result["obs"]:
                 for field_name in _OBSERVATION_SUMMARY_FIELDS:
                     obs.pop(field_name, None)

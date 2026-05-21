@@ -213,6 +213,12 @@ SAMPLE_OBSERVATION_DATA = {
 }
 
 
+def _structured(result):
+    """Return the structured dict whether the tool returned a dict or a ToolResult."""
+    sc = getattr(result, "structured_content", None)
+    return sc if sc is not None else result
+
+
 @pytest.fixture(autouse=True)
 def _clear_cache():
     """Clear caches and disable disk cache for test isolation."""
@@ -1115,6 +1121,33 @@ class TestObservationSummaryDetailed:
             # detailed keeps location metadata
             assert "latitude" in result
             assert "longitude" in result
+
+
+async def test_observation_summary_drops_null_optionals():
+    import copy
+
+    from mcp_server_tempest.server import get_observation
+
+    sample = copy.deepcopy(SAMPLE_OBSERVATION_DATA)
+    sample["obs"][0]["lightning_strike_last_epoch"] = None
+    sample["obs"][0]["lightning_strike_last_distance"] = None
+
+    with patch(
+        "mcp_server_tempest.server.api_get_observation",
+        new=AsyncMock(return_value=sample),
+    ):
+        with patch.dict(os.environ, {"WEATHERFLOW_API_TOKEN": "t"}):
+            cache.clear()
+            summary = _structured(await get_observation(station_id=12345))
+            cache.clear()
+            detailed = _structured(await get_observation(station_id=12345, detailed=True))
+
+    s_obs = summary["obs"][0]
+    d_obs = detailed["obs"][0]
+    assert all(v is not None for v in s_obs.values())  # no nulls in summary
+    assert "lightning_strike_last_epoch" not in s_obs  # the null optional was dropped
+    assert "lightning_strike_last_epoch" in d_obs  # detailed keeps it (as None)
+    assert set(d_obs.keys()) >= set(s_obs.keys())
 
 
 # -- Tests for health check --
