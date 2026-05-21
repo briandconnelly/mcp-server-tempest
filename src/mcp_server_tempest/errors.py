@@ -5,6 +5,7 @@ contract that this module implements.
 """
 
 import json
+import secrets
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -16,6 +17,9 @@ class ErrorCode(StrEnum):
     AUTH_MISSING = "auth_missing"
     AUTH_INVALID = "auth_invalid"
     AUTH_FORBIDDEN = "auth_forbidden"
+    # client sent a malformed argument (caught at the schema boundary by the
+    # contract middleware before the tool body runs)
+    INVALID_ARGUMENT = "invalid_argument"
     STATION_NOT_FOUND = "station_not_found"
     RATE_LIMITED = "rate_limited"
     # retryable: upstream is healthy-ish, just temporarily unreachable
@@ -30,6 +34,11 @@ class ErrorCode(StrEnum):
 _TEMPORARY: frozenset[ErrorCode] = frozenset(
     {ErrorCode.RATE_LIMITED, ErrorCode.UPSTREAM_UNAVAILABLE}
 )
+
+
+def _new_request_id() -> str:
+    """Per-call correlation id for log/error pairing. 16 hex chars (~64 bits)."""
+    return secrets.token_hex(8)
 
 
 @dataclass

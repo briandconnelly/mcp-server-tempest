@@ -80,7 +80,7 @@ def _translate_response_error(
                 code=ErrorCode.AUTH_FORBIDDEN,
                 message="Token does not have access to this station.",
                 hint="Verify station ownership.",
-                next={"tool": "get_stations"},
+                next={"tool": "tempest_get_stations"},
                 details={"upstream_status": 403, "operation": operation},
             )
         return WeatherFlowError(
@@ -94,10 +94,10 @@ def _translate_response_error(
             return WeatherFlowError(
                 code=ErrorCode.STATION_NOT_FOUND,
                 message="Station not found.",
-                hint="Call get_stations to list valid station_ids.",
+                hint="Call tempest_get_stations to list valid station_ids.",
                 field_name="station_id",
                 value=station_id,
-                next={"tool": "get_stations"},
+                next={"tool": "tempest_get_stations"},
                 details={"upstream_status": 404, "operation": operation},
             )
         return WeatherFlowError(
@@ -164,10 +164,10 @@ async def api_get_station_id(station_id: int, token: str) -> dict:
                 raise WeatherFlowError(
                     code=ErrorCode.STATION_NOT_FOUND,
                     message="Station not found.",
-                    hint="Call get_stations to list valid station_ids.",
+                    hint="Call tempest_get_stations to list valid station_ids.",
                     field_name="station_id",
                     value=station_id,
-                    next={"tool": "get_stations"},
+                    next={"tool": "tempest_get_stations"},
                     # No upstream_status — the API returned 200 with an empty list.
                     details={"operation": "station"},
                 )

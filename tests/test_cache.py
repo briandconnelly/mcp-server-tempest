@@ -114,3 +114,21 @@ class TestDiskCache:
         assert result.name == "sneaky"
         # Verify no files were created outside cache dir
         assert all(p.parent == disk_cache.cache_dir for p in disk_cache.cache_dir.iterdir())
+
+    def test_get_with_age_returns_model_and_timestamp(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "mcp_server_tempest.cache.user_cache_dir", lambda *_a, **_k: str(tmp_path)
+        )
+        from mcp_server_tempest.cache import DiskCache
+        from mcp_server_tempest.models import StationsResponse
+
+        dc = DiskCache("tok")
+        model = StationsResponse(stations=[], status={"status_code": 0, "status_message": "ok"})
+        dc.set("stations", model)
+
+        hit = dc.get_with_age("stations", StationsResponse)
+        assert hit is not None
+        got, ts = hit
+        assert isinstance(got, StationsResponse)
+        assert isinstance(ts, float)
+        assert dc.get_with_age("missing", StationsResponse) is None

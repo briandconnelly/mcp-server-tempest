@@ -24,38 +24,44 @@ Environment Variables:
     WEATHERFLOW_DISK_CACHE_TTL: Disk cache TTL in seconds (default: 86400).
         Per-token JSON files under
         platformdirs.user_cache_dir("mcp-server-tempest").
-        Used by get_stations and get_station_details.
+        Used by tempest_get_stations and tempest_get_station_details.
 
 Example Usage:
     # Get available stations
-    stations = await client.call_tool("get_stations")
+    stations = await client.call_tool("tempest_get_stations")
 
     # Get current conditions for a specific station
-    conditions = await client.call_tool("get_observation", {"station_id": 12345})
+    conditions = await client.call_tool("tempest_get_observation", {"station_id": 12345})
 
     # Get the forecast
-    forecast = await client.call_tool("get_forecast", {"station_id": 12345})
+    forecast = await client.call_tool("tempest_get_forecast", {"station_id": 12345})
 """
 
+import hashlib
 import json
 import logging
 import os
-import secrets
 import traceback
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
-from typing import Annotated, Any, TypeVar
+from time import time as _now
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from cachetools import TTLCache
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.tools.base import ToolResult
+from jsonschema import Draft202012Validator
 from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .cache import DiskCache
-from .errors import ErrorCode, WeatherFlowError
+from .errors import ErrorCode, WeatherFlowError, _new_request_id
+from .middleware import JSON_SCHEMA_DIALECT, TempestContractMiddleware
 from .models import (
     ForecastResponse,
     ObservationResponse,
@@ -82,11 +88,6 @@ try:
     _PKG_VERSION = version("mcp-server-tempest")
 except PackageNotFoundError:
     _PKG_VERSION = "unknown"
-
-
-def _new_request_id() -> str:
-    """Per-call correlation id for log/error pairing. 16 hex chars (~64 bits)."""
-    return secrets.token_hex(8)
 
 
 _KNOWN_CODES: frozenset[str] = frozenset(c.value for c in ErrorCode)
@@ -160,6 +161,36 @@ cache = TTLCache(
     ttl=_int_env("WEATHERFLOW_CACHE_TTL", 300),
 )
 
+# Epoch seconds of the last upstream fetch per cache key. A bounded TTLCache
+# (same shape as the data cache) so it cannot leak relative to it; if an entry
+# expires before its data, ts_retrieved is simply omitted on that hit.
+_fetch_times: TTLCache = TTLCache(
+    maxsize=_int_env("WEATHERFLOW_CACHE_SIZE", 100),
+    ttl=_int_env("WEATHERFLOW_CACHE_TTL", 300),
+)
+
+
+@dataclass
+class Fetched(Generic[T]):
+    """A model plus where it came from, for response _meta."""
+
+    data: T
+    cache: Literal["memory", "disk", "miss"]
+    ts_epoch: float | None
+
+
+def _iso(ts_epoch: float | None) -> str | None:
+    return None if ts_epoch is None else datetime.fromtimestamp(ts_epoch, tz=UTC).isoformat()
+
+
+def _meta_for(fetched: Fetched) -> dict:
+    meta: dict = {"cache": fetched.cache, "fingerprint": _FINGERPRINT}
+    iso = _iso(fetched.ts_epoch)
+    if iso is not None:
+        meta["ts_retrieved"] = iso
+    return meta
+
+
 disk_cache: DiskCache | None = None
 
 
@@ -186,20 +217,19 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
         logger.info("WeatherFlow Tempest server starting")
         dc = _get_disk_cache()
         if dc:
-            hit = dc.get("stations", StationsResponse)
+            hit = dc.get_with_age("stations", StationsResponse)
             if hit is not None:
-                cache["stations"] = hit
+                model, ts = hit
+                cache["stations"] = model
+                _fetch_times["stations"] = ts
                 logger.info(
                     "Pre-warmed stations cache from disk (%d stations)",
-                    len(hit.stations),
+                    len(model.stations),
                 )
     yield
 
 
-# Create the MCP server
-mcp = FastMCP(
-    name="WeatherFlow Tempest",
-    instructions="""\
+_INSTRUCTIONS = """\
 WeatherFlow Tempest — read-only access to a user's personal Tempest weather
 station(s). Not a global weather service.
 
@@ -219,19 +249,19 @@ DO NOT USE for:
 - Historical analysis beyond what the live API returns (no archive)
 
 TOOL SELECTION:
-- "How many / list my stations"              -> get_stations
-- "Deeper config / hardware for one station" -> get_station_details(station_id)
-- "Current conditions / right now"           -> get_observation(station_id)
-- "Forecast / later / tomorrow / this week"  -> get_forecast(station_id)
+- "How many / list my stations"              -> tempest_get_stations
+- "Deeper config / hardware for one station" -> tempest_get_station_details(station_id)
+- "Current conditions / right now"           -> tempest_get_observation(station_id)
+- "Forecast / later / tomorrow / this week"  -> tempest_get_forecast(station_id)
 
 NOTES:
 - Units follow each station's config — read 'station_units' / 'units' fields.
   Never assume °F vs °C or mph vs km/h.
-- get_stations already returns devices and capabilities — only call
-  get_station_details for the deeper per-station record.
-- get_forecast also returns a current snapshot, but get_observation is
+- tempest_get_stations already returns devices and capabilities — only call
+  tempest_get_station_details for the deeper per-station record.
+- tempest_get_forecast also returns a current snapshot, but tempest_get_observation is
   lighter for current-only questions.
-- get_forecast in summary mode (default) caps at 6 hourly / 2 daily; pass
+- tempest_get_forecast in summary mode (default) caps at 6 hourly / 2 daily; pass
   detailed=True for full ranges. The response carries `truncated`,
   `requested_*`, `returned_*`, and `truncation_hint` so clients can
   detect clipping structurally.
@@ -240,30 +270,38 @@ AMBIENT STATE (affects freshness and cache repair):
 - WEATHERFLOW_CACHE_TTL (default 300s) and WEATHERFLOW_CACHE_SIZE
   (default 100): in-memory cache used by all four tools.
 - WEATHERFLOW_DISK_CACHE_TTL (default 86400s): disk cache for
-  get_stations and get_station_details only. Survives restarts; per-token
+  tempest_get_stations and tempest_get_station_details only. Survives restarts; per-token
   subdirectory (hash-keyed for account isolation) under
   platformdirs.user_cache_dir("mcp-server-tempest").
 - To force fresh data: restart the server (clears in-memory) or delete
   the cache directory above (clears disk).
 
 TYPICAL WORKFLOW:
-1. If you don't already have a station_id, call get_stations first.
+1. If you don't already have a station_id, call tempest_get_stations first.
    Station ids are not guessable — don't fabricate one.
-2. Then get_observation(station_id) or get_forecast(station_id).
-   If get_stations returned one station, use it without asking.
+2. Then tempest_get_observation(station_id) or tempest_get_forecast(station_id).
+   If tempest_get_stations returned one station, use it without asking.
 
 SETUP (required):
 - WEATHERFLOW_API_TOKEN — get one at https://tempestwx.com/settings/tokens.
 
-SERVER SURFACE: mcp-server-tempest@{version} — capability fingerprint;
-bumps on any change to tools, schemas, error codes, or instructions.
+SERVER SURFACE: mcp-server-tempest@{version}. Read tempest://capabilities for
+the structured surface summary (scope, tools, error codes, fingerprint). Each
+tool result also carries _meta.fingerprint; it changes on any tool/schema/
+error-code/instructions change.
 
 TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
 `uvx`) speaks MCP over stdio.
-""".format(version=_PKG_VERSION),
+""".format(version=_PKG_VERSION)
+
+# Create the MCP server
+mcp = FastMCP(
+    name="WeatherFlow Tempest",
+    instructions=_INSTRUCTIONS,
     lifespan=lifespan,
     on_duplicate="error",
 )
+mcp.add_middleware(TempestContractMiddleware())
 
 
 def _get_api_token(env_var: str = "WEATHERFLOW_API_TOKEN") -> str:
@@ -349,6 +387,11 @@ def _relaxed_schema(
 
     _lock_additional_properties(schema)
 
+    # Stamp the dialect at generation time (not only via the on_list_tools
+    # middleware) so the advertised output schema and the fingerprinted schema
+    # are identical — the fingerprint genuinely covers the declared dialect.
+    schema["$schema"] = JSON_SCHEMA_DIALECT
+
     return schema
 
 
@@ -408,6 +451,142 @@ _OBSERVATION_SCHEMA = _relaxed_schema(
         },
     },
 )
+
+
+def _compute_fingerprint() -> str:
+    """Deterministic hash of the agent-visible authored surface.
+
+    Covers: package version, wire tool names, output schemas, error codes, and
+    the instructions text (scope/negative-scope/selection). Input schemas are
+    NOT hashed directly — an input-contract change requires a version bump,
+    which moves this fingerprint. Stated in capabilities.fingerprint_covers.
+    """
+    surface = json.dumps(
+        {
+            "version": _PKG_VERSION,
+            "tools": sorted(
+                [
+                    "tempest_get_stations",
+                    "tempest_get_station_details",
+                    "tempest_get_observation",
+                    "tempest_get_forecast",
+                ]
+            ),
+            "output_schemas": {
+                "stations": _STATIONS_SCHEMA,
+                "station": _STATION_SCHEMA,
+                "forecast": _FORECAST_SCHEMA,
+                "observation": _OBSERVATION_SCHEMA,
+            },
+            "error_codes": sorted(c.value for c in ErrorCode),
+            "instructions": _INSTRUCTIONS,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "sha256:" + hashlib.sha256(surface.encode()).hexdigest()[:16]
+
+
+_FINGERPRINT = _compute_fingerprint()
+
+
+# The server skips its own output validation when a ToolResult carries _meta,
+# so we validate here against the same locked schemas before shipping. A
+# failure means the response drifted from the published contract — a server
+# bug, surfaced as internal_error rather than handed to the agent.
+# values are Draft202012Validator; annotated Any because jsonschema ships no py.typed
+_OUTPUT_VALIDATORS: dict[str, Any] = {
+    "stations": Draft202012Validator(_STATIONS_SCHEMA),
+    "station": Draft202012Validator(_STATION_SCHEMA),
+    "forecast": Draft202012Validator(_FORECAST_SCHEMA),
+    "observation": Draft202012Validator(_OBSERVATION_SCHEMA),
+}
+
+
+def _validated(schema_key: str, result: dict, fetched: Fetched) -> ToolResult:
+    validator = _OUTPUT_VALIDATORS[schema_key]
+    if not validator.is_valid(result):
+        # str() each path element: paths mix str keys and int indices, and
+        # sorting heterogeneous types would raise TypeError and mask the real
+        # validation error.
+        errs = sorted(
+            validator.iter_errors(result),
+            key=lambda e: [str(x) for x in e.path],
+        )
+        raise WeatherFlowError(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Response failed output-schema validation.",
+            hint="Server contract drift; report at "
+            "https://github.com/briandconnelly/mcp-server-tempest/issues",
+            details={"validation_error": errs[0].message},
+        )
+    return ToolResult(structured_content=result, meta=_meta_for(fetched))
+
+
+def _build_capabilities() -> dict:
+    return {
+        "name": "WeatherFlow Tempest",
+        "version": _PKG_VERSION,
+        "fingerprint": _FINGERPRINT,
+        "fingerprint_covers": (
+            "version, wire tool names, output schemas, error codes, instructions. "
+            "Input-schema changes are reflected only via a version bump."
+        ),
+        "transport": "stdio",
+        "scope": (
+            "Read-only access to the user's own WeatherFlow Tempest station(s) — "
+            "not a global weather service."
+        ),
+        "not_in_scope": [
+            "Global, regional, or arbitrary-location weather — use a public weather API",
+            "Air quality, pollen, smoke index",
+            "Severe-weather alerts, radar imagery, watches/warnings",
+            "Historical/archive analysis beyond the live API",
+        ],
+        "tools": [
+            {
+                "name": "tempest_get_stations",
+                "purpose": "List the user's stations, devices, capabilities.",
+            },
+            {
+                "name": "tempest_get_station_details",
+                "purpose": "Deep config/hardware/location for one station.",
+            },
+            {
+                "name": "tempest_get_observation",
+                "purpose": "Current conditions for one station.",
+            },
+            {
+                "name": "tempest_get_forecast",
+                "purpose": "Hourly + daily forecast plus a current snapshot.",
+            },
+        ],
+        "error_codes": sorted(c.value for c in ErrorCode),
+        "timestamps": (
+            "Upstream weather timestamps are Unix epoch seconds, as provided by "
+            "WeatherFlow; interpret local-time fields with the station's IANA "
+            "`timezone`. Server-generated timestamps (e.g. _meta.ts_retrieved) "
+            "are RFC3339 UTC."
+        ),
+        "caching": (
+            "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for all tools; disk "
+            "(WEATHERFLOW_DISK_CACHE_TTL, default 86400s) for stations and "
+            "station_details. Each tool result carries _meta.cache and "
+            "_meta.fingerprint; _meta.ts_retrieved is included when the fetch "
+            "time is known (it may be omitted on some cache hits)."
+        ),
+    }
+
+
+@mcp.resource(
+    "tempest://capabilities",
+    name="Server capabilities",
+    description="Structured summary: scope, negative scope, tools, error codes, fingerprint.",
+    mime_type="application/json",
+)
+def capabilities() -> dict:
+    return _build_capabilities()
+
 
 _STATIONS_EXCLUDE: dict = {
     "stations": {
@@ -469,39 +648,44 @@ _OBSERVATION_SUMMARY_FIELDS: set[str] = {
 }
 
 
-async def _get_stations_data(ctx: Context | None, use_cache: bool = True) -> StationsResponse:
+async def _get_stations_data(
+    ctx: Context | None, use_cache: bool = True
+) -> Fetched[StationsResponse]:
     """Shared logic for getting stations data."""
     token = _get_api_token()
 
     if use_cache and "stations" in cache:
         if ctx:
             await ctx.info("Using cached station data")
-        return cache["stations"]
+        return Fetched(cache["stations"], "memory", _fetch_times.get("stations"))
 
     dc = _get_disk_cache()
     if use_cache and dc:
-        hit = dc.get("stations", StationsResponse)
+        hit = dc.get_with_age("stations", StationsResponse)
         if hit is not None:
+            model, ts = hit
             if ctx:
                 await ctx.info("Using disk-cached station data")
-            cache["stations"] = hit
-            return hit
+            cache["stations"] = model
+            _fetch_times["stations"] = ts
+            return Fetched(model, "disk", ts)
 
     if ctx:
         await ctx.report_progress(progress=0, total=1)
         await ctx.info("Getting available stations via the Tempest API")
     result = await api_get_stations(token)
     cache["stations"] = StationsResponse(**result)
+    _fetch_times["stations"] = _now()
     if dc:
         dc.set("stations", cache["stations"])
     if ctx:
         await ctx.report_progress(progress=1, total=1)
-    return cache["stations"]
+    return Fetched(cache["stations"], "miss", _fetch_times["stations"])
 
 
 async def _get_station_details_data(
     station_id: int, ctx: Context | None, use_cache: bool = True
-) -> StationResponse:
+) -> Fetched[StationResponse]:
     """Shared logic for getting station details data."""
     token = _get_api_token()
 
@@ -510,32 +694,35 @@ async def _get_station_details_data(
     if use_cache and cache_id in cache:
         if ctx:
             await ctx.info(f"Using cached station data for station {station_id}")
-        return cache[cache_id]
+        return Fetched(cache[cache_id], "memory", _fetch_times.get(cache_id))
 
     dc = _get_disk_cache()
     if use_cache and dc:
-        hit = dc.get(cache_id, StationResponse)
+        hit = dc.get_with_age(cache_id, StationResponse)
         if hit is not None:
+            model, ts = hit
             if ctx:
                 await ctx.info(f"Using disk-cached station data for station {station_id}")
-            cache[cache_id] = hit
-            return hit
+            cache[cache_id] = model
+            _fetch_times[cache_id] = ts
+            return Fetched(model, "disk", ts)
 
     if ctx:
         await ctx.report_progress(progress=0, total=1)
         await ctx.info(f"Getting station ID data for station {station_id} via the Tempest API")
     result = await api_get_station_id(station_id, token)
     cache[cache_id] = StationResponse(**result)
+    _fetch_times[cache_id] = _now()
     if dc:
         dc.set(cache_id, cache[cache_id])
     if ctx:
         await ctx.report_progress(progress=1, total=1)
-    return cache[cache_id]
+    return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
 
 
 async def _get_forecast_data(
     station_id: int, ctx: Context | None, use_cache: bool = True
-) -> ForecastResponse:
+) -> Fetched[ForecastResponse]:
     """Shared logic for getting forecast data."""
     token = _get_api_token()
 
@@ -543,21 +730,22 @@ async def _get_forecast_data(
     if use_cache and cache_id in cache:
         if ctx:
             await ctx.info(f"Using cached forecast data for station {station_id}")
-        return cache[cache_id]
+        return Fetched(cache[cache_id], "memory", _fetch_times.get(cache_id))
 
     if ctx:
         await ctx.report_progress(progress=0, total=1)
         await ctx.info(f"Getting forecast for station {station_id} via the Tempest API")
     result = await api_get_forecast(station_id, token)
     cache[cache_id] = ForecastResponse(**result)
+    _fetch_times[cache_id] = _now()
     if ctx:
         await ctx.report_progress(progress=1, total=1)
-    return cache[cache_id]
+    return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
 
 
 async def _get_observation_data(
     station_id: int, ctx: Context | None, use_cache: bool = True
-) -> ObservationResponse:
+) -> Fetched[ObservationResponse]:
     """Shared logic for getting observation data."""
     token = _get_api_token()
 
@@ -565,19 +753,21 @@ async def _get_observation_data(
     if use_cache and cache_id in cache:
         if ctx:
             await ctx.info(f"Using cached observation data for station {station_id}")
-        return cache[cache_id]
+        return Fetched(cache[cache_id], "memory", _fetch_times.get(cache_id))
 
     if ctx:
         await ctx.report_progress(progress=0, total=1)
         await ctx.info(f"Getting observations for station {station_id} via the Tempest API")
     result = await api_get_observation(station_id, token)
     cache[cache_id] = ObservationResponse(**result)
+    _fetch_times[cache_id] = _now()
     if ctx:
         await ctx.report_progress(progress=1, total=1)
-    return cache[cache_id]
+    return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
 
 
 @mcp.tool(
+    name="tempest_get_stations",
     tags={"weather", "stations"},
     annotations={
         "title": "Get Weather Stations",
@@ -589,15 +779,15 @@ async def _get_observation_data(
 )
 async def get_stations(
     ctx: Context | None = None,
-) -> dict:
+) -> ToolResult:
     """List the user's weather stations.
 
     Use when: station_id is unknown, or for general inventory ("what
     stations do I have", "where", "what devices"). Covers most
-    inventory questions without a follow-up call to get_station_details.
+    inventory questions without a follow-up call to tempest_get_station_details.
 
-    Don't use for: current conditions (-> get_observation) or forecasts
-    (-> get_forecast).
+    Don't use for: current conditions (-> tempest_get_observation) or forecasts
+    (-> tempest_get_forecast).
 
     Output: list of stations with id, name, location (lat, lon, timezone),
     devices, and capabilities. Admin/internal fields are excluded.
@@ -607,21 +797,28 @@ async def get_stations(
     - auth_invalid — token rejected; regenerate at
       https://tempestwx.com/settings/tokens
     - auth_forbidden — token lacks access (scope or ownership)
+    - invalid_argument — a parameter was malformed (wrong type, out of range, or
+      unknown field); fix it and retry
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
     - upstream_invalid_response — WeatherFlow returned something unparseable
     - internal_error — server bug; report at
       https://github.com/briandconnelly/mcp-server-tempest/issues
+
+    Scope: the user's own WeatherFlow Tempest station(s) only — not a global
+    or arbitrary-location weather service.
     """
 
-    async def _work() -> dict:
-        data = await _get_stations_data(ctx)
-        return data.model_dump(exclude=_STATIONS_EXCLUDE)
+    async def _work() -> ToolResult:
+        fetched = await _get_stations_data(ctx)
+        result = fetched.data.model_dump(exclude=_STATIONS_EXCLUDE)
+        return _validated("stations", result, fetched)
 
     return await _dispatch(_work)
 
 
 @mcp.tool(
+    name="tempest_get_station_details",
     tags={"weather", "stations"},
     annotations={
         "title": "Get Weather Station Information",
@@ -634,16 +831,16 @@ async def get_stations(
 async def get_station_details(
     station_id: Annotated[int, Field(description="The station ID to get information for", gt=0)],
     ctx: Context | None = None,
-) -> dict:
+) -> ToolResult:
     """Get configuration, devices, hardware, and location for one specific station.
 
     Use when: user asks about station hardware ("what devices does my station
     have"), location ("where is my station", "elevation", "what's my
     timezone"), or station-level metadata.
 
-    Don't use for: weather data (-> get_observation, -> get_forecast).
+    Don't use for: weather data (-> tempest_get_observation, -> tempest_get_forecast).
 
-    Workflow: requires station_id from get_stations.
+    Workflow: requires station_id from tempest_get_stations.
 
     Output: detailed station record — devices, sensor capabilities, location,
     metadata. Rarely needed if the user only asked about weather.
@@ -653,22 +850,29 @@ async def get_station_details(
     - auth_invalid — token rejected; regenerate at
       https://tempestwx.com/settings/tokens
     - auth_forbidden — token lacks access to this station; verify ownership
-    - station_not_found — invalid station_id; call get_stations
+    - invalid_argument — a parameter was malformed (wrong type, out of range, or
+      unknown field); fix it and retry
+    - station_not_found — invalid station_id; call tempest_get_stations
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
     - upstream_invalid_response — WeatherFlow returned something unparseable
     - internal_error — server bug; report at
       https://github.com/briandconnelly/mcp-server-tempest/issues
+
+    Scope: the user's own WeatherFlow Tempest station(s) only — not a global
+    or arbitrary-location weather service.
     """
 
-    async def _work() -> dict:
-        data = await _get_station_details_data(station_id, ctx)
-        return data.model_dump(exclude=_STATION_EXCLUDE)
+    async def _work() -> ToolResult:
+        fetched = await _get_station_details_data(station_id, ctx)
+        result = fetched.data.model_dump(exclude=_STATION_EXCLUDE)
+        return _validated("station", result, fetched)
 
     return await _dispatch(_work)
 
 
 @mcp.tool(
+    name="tempest_get_forecast",
     tags={"weather", "forecast"},
     annotations={
         "title": "Get Weather Forecast for a Station",
@@ -708,18 +912,18 @@ async def get_forecast(
         ),
     ] = False,
     ctx: Context | None = None,
-) -> dict:
+) -> ToolResult:
     """Get the weather forecast for a station — includes a current snapshot
     plus hourly and daily forecasts.
 
     Use when: user asks about future weather ("will it rain tomorrow", "this
     weekend", "10-day forecast", "next few hours").
 
-    Don't use for: current-only questions when get_observation will do —
+    Don't use for: current-only questions when tempest_get_observation will do —
     this returns a much larger response. If you need both current AND
     future, this tool covers both in one call.
 
-    Workflow: requires station_id from get_stations. Summary mode (default)
+    Workflow: requires station_id from tempest_get_stations. Summary mode (default)
     caps at 6 hourly / 2 daily; pass detailed=True for full ranges. The
     response carries `truncated` and `truncation_hint` so clients can
     detect clipping without parsing this prose.
@@ -732,17 +936,22 @@ async def get_forecast(
     - auth_invalid — token rejected; regenerate at
       https://tempestwx.com/settings/tokens
     - auth_forbidden — token lacks access to this station; verify ownership
-    - station_not_found — invalid station_id; call get_stations
+    - invalid_argument — a parameter was malformed (wrong type, out of range, or
+      unknown field); fix it and retry
+    - station_not_found — invalid station_id; call tempest_get_stations
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
     - upstream_invalid_response — WeatherFlow returned something unparseable
     - internal_error — server bug; report at
       https://github.com/briandconnelly/mcp-server-tempest/issues
+
+    Scope: the user's own WeatherFlow Tempest station(s) only — not a global
+    or arbitrary-location weather service.
     """
 
-    async def _work() -> dict:
-        data = await _get_forecast_data(station_id, ctx)
-        result = data.model_dump(exclude=_FORECAST_EXCLUDE)
+    async def _work() -> ToolResult:
+        fetched = await _get_forecast_data(station_id, ctx)
+        result = fetched.data.model_dump(exclude=_FORECAST_EXCLUDE, exclude_none=not detailed)
 
         if detailed:
             result["forecast"]["hourly"] = result["forecast"]["hourly"][:hours]
@@ -781,12 +990,13 @@ async def get_forecast(
             # already convey.
             result.pop("truncation_hint", None)
 
-        return result
+        return _validated("forecast", result, fetched)
 
     return await _dispatch(_work)
 
 
 @mcp.tool(
+    name="tempest_get_observation",
     tags={"weather", "observations"},
     annotations={
         "title": "Get Current Weather Observations for a Station",
@@ -808,20 +1018,20 @@ async def get_observation(
         ),
     ] = False,
     ctx: Context | None = None,
-) -> dict:
+) -> ToolResult:
     """Get the most recent weather observations from a station — current
     conditions including temperature, humidity, pressure, wind, precipitation,
     solar/UV, and lightning.
 
     Use when: the user asks about right-now conditions ("how warm is it",
-    "is it raining", "any lightning"). Lighter and faster than get_forecast
+    "is it raining", "any lightning"). Lighter and faster than tempest_get_forecast
     for current-only questions.
 
-    Don't use for: future weather (-> get_forecast). Don't pass detailed=True
+    Don't use for: future weather (-> tempest_get_forecast). Don't pass detailed=True
     unless the user explicitly asks for full sensor data (heat index, wet
     bulb, air density, etc.) — the default summary is what most answers need.
 
-    Workflow: requires station_id from get_stations.
+    Workflow: requires station_id from tempest_get_stations.
 
     Output: current observations in the station's configured units — read
     'station_units' in the response.
@@ -831,26 +1041,33 @@ async def get_observation(
     - auth_invalid — token rejected; regenerate at
       https://tempestwx.com/settings/tokens
     - auth_forbidden — token lacks access to this station; verify ownership
-    - station_not_found — invalid station_id; call get_stations
+    - invalid_argument — a parameter was malformed (wrong type, out of range, or
+      unknown field); fix it and retry
+    - station_not_found — invalid station_id; call tempest_get_stations
     - rate_limited (temporary; retry after retry_after_ms)
     - upstream_unavailable (temporary; transient WeatherFlow outage)
     - upstream_invalid_response — WeatherFlow returned something unparseable
     - internal_error — server bug; report at
       https://github.com/briandconnelly/mcp-server-tempest/issues
+
+    Scope: the user's own WeatherFlow Tempest station(s) only — not a global
+    or arbitrary-location weather service.
     """
 
-    async def _work() -> dict:
-        data = await _get_observation_data(station_id, ctx)
-        result = data.model_dump(exclude=_OBSERVATION_EXCLUDE)
+    async def _work() -> ToolResult:
+        fetched = await _get_observation_data(station_id, ctx)
 
-        if not detailed:
+        if detailed:
+            result = fetched.data.model_dump(exclude=_OBSERVATION_EXCLUDE)
+        else:
+            result = fetched.data.model_dump(exclude=_OBSERVATION_EXCLUDE, exclude_none=True)
             for obs in result["obs"]:
                 for field_name in _OBSERVATION_SUMMARY_FIELDS:
                     obs.pop(field_name, None)
             for key in ("latitude", "longitude", "elevation", "is_public"):
                 result.pop(key, None)
 
-        return result
+        return _validated("observation", result, fetched)
 
     return await _dispatch(_work)
 

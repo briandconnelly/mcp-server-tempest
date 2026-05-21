@@ -63,8 +63,8 @@ The server caches responses in two layers:
 
 - **In-memory** (`WEATHERFLOW_CACHE_TTL` / `WEATHERFLOW_CACHE_SIZE`): all four
   tools.
-- **On disk** (`WEATHERFLOW_DISK_CACHE_TTL`, default 24h): `get_stations` and
-  `get_station_details` only. Stored under
+- **On disk** (`WEATHERFLOW_DISK_CACHE_TTL`, default 24h): `tempest_get_stations` and
+  `tempest_get_station_details` only. Stored under
   `platformdirs.user_cache_dir("mcp-server-tempest")` in a per-token
   (hash-keyed) subdirectory.
 
@@ -80,35 +80,35 @@ stdio (the default for `uvx mcp-server-tempest` and the README config).
 
 ### Available Tools
 
-#### `get_stations()`
+#### `tempest_get_stations()`
 Get a list of all your weather stations and connected devices.
 
 ```python
 # Get all available stations
-stations = await client.call_tool("get_stations")
+stations = await client.call_tool("tempest_get_stations")
 for station in stations["stations"]:
     print(f"Station: {station['name']} (ID: {station['station_id']})")
     print(f"Location: {station['latitude']}, {station['longitude']}")
 ```
 
-#### `get_observation(station_id)`
+#### `tempest_get_observation(station_id)`
 Get current weather conditions for a specific station.
 
 ```python
 # Get current conditions
-obs = await client.call_tool("get_observation", {"station_id": 12345})
+obs = await client.call_tool("tempest_get_observation", {"station_id": 12345})
 current = obs["obs"][0]
 print(f"Temperature: {current['air_temperature']}°")
 print(f"Humidity: {current['relative_humidity']}%")
 print(f"Wind: {current['wind_avg']} {obs['station_units']['units_wind']}")
 ```
 
-#### `get_forecast(station_id)`
+#### `tempest_get_forecast(station_id)`
 Get weather forecast and current conditions.
 
 ```python
 # Get forecast
-forecast = await client.call_tool("get_forecast", {"station_id": 12345})
+forecast = await client.call_tool("tempest_get_forecast", {"station_id": 12345})
 
 # Current conditions
 current = forecast["current_conditions"]
@@ -121,12 +121,12 @@ print(f"High/Low: {today['air_temp_high']}°/{today['air_temp_low']}°")
 print(f"Rain chance: {today['precip_probability']}%")
 ```
 
-#### `get_station_details(station_id)`
+#### `tempest_get_station_details(station_id)`
 Get detailed information about a specific station.
 
 ```python
 # Get station details
-station = await client.call_tool("get_station_details", {"station_id": 12345})
+station = await client.call_tool("tempest_get_station_details", {"station_id": 12345})
 print(f"Station: {station['name']}")
 print(f"Elevation: {station['station_meta']['elevation']}m")
 print(f"Devices: {len(station['devices'])}")
@@ -139,11 +139,11 @@ print(f"Devices: {len(station['devices'])}")
 
 ```python
 # Get your stations
-stations = await client.call_tool("get_stations")
+stations = await client.call_tool("tempest_get_stations")
 station_id = stations["stations"][0]["station_id"]
 
 # Get current conditions
-obs = await client.call_tool("get_observation", {"station_id": station_id})
+obs = await client.call_tool("tempest_get_observation", {"station_id": station_id})
 current = obs["obs"][0]
 units = obs["station_units"]
 
@@ -159,7 +159,7 @@ print(f"🌧️  Precipitation: {current['precip_accum_local_day']} {units['unit
 from datetime import datetime
 
 # Get forecast
-forecast = await client.call_tool("get_forecast", {"station_id": station_id})
+forecast = await client.call_tool("tempest_get_forecast", {"station_id": station_id})
 
 # Today's weather
 today = forecast["forecast"]["daily"][0]
@@ -177,7 +177,7 @@ for hour in forecast["forecast"]["hourly"][:6]:
 
 ```python
 # Get station details
-station = await client.call_tool("get_station_details", {"station_id": station_id})
+station = await client.call_tool("tempest_get_station_details", {"station_id": station_id})
 
 print(f"🏠 Station: {station['name']}")
 print(f"📍 Location: {station['latitude']}°, {station['longitude']}°")

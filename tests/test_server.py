@@ -213,14 +213,22 @@ SAMPLE_OBSERVATION_DATA = {
 }
 
 
+def _structured(result):
+    """Return the structured dict whether the tool returned a dict or a ToolResult."""
+    sc = getattr(result, "structured_content", None)
+    return sc if sc is not None else result
+
+
 @pytest.fixture(autouse=True)
 def _clear_cache():
     """Clear caches and disable disk cache for test isolation."""
     cache.clear()
+    server_module._fetch_times.clear()
     server_module.disk_cache = None
     with patch.object(server_module, "_get_disk_cache", return_value=None):
         yield
     cache.clear()
+    server_module._fetch_times.clear()
     server_module.disk_cache = None
 
 
@@ -292,7 +300,7 @@ class TestGetStationsData:
             "mcp_server_tempest.server.api_get_stations",
             return_value=SAMPLE_STATION_DATA,
         ):
-            result = await _get_stations_data(mock_ctx, use_cache=False)
+            result = (await _get_stations_data(mock_ctx, use_cache=False)).data
             assert result.status.status_code == 0
             assert len(result.stations) == 1
             assert result.stations[0].station_id == 12345
@@ -301,7 +309,7 @@ class TestGetStationsData:
 
     async def test_returns_cached_data(self, mock_ctx):
         cache["stations"] = "cached_value"
-        result = await _get_stations_data(mock_ctx, use_cache=True)
+        result = (await _get_stations_data(mock_ctx, use_cache=True)).data
         assert result == "cached_value"
         mock_ctx.info.assert_called_with("Using cached station data")
 
@@ -311,7 +319,7 @@ class TestGetStationsData:
             "mcp_server_tempest.server.api_get_stations",
             return_value=SAMPLE_STATION_DATA,
         ):
-            result = await _get_stations_data(mock_ctx, use_cache=False)
+            result = (await _get_stations_data(mock_ctx, use_cache=False)).data
             assert result.stations[0].station_id == 12345
 
     async def test_handles_none_ctx(self):
@@ -319,7 +327,7 @@ class TestGetStationsData:
             "mcp_server_tempest.server.api_get_stations",
             return_value=SAMPLE_STATION_DATA,
         ):
-            result = await _get_stations_data(None, use_cache=False)
+            result = (await _get_stations_data(None, use_cache=False)).data
             assert result.stations[0].station_id == 12345
 
 
@@ -330,20 +338,20 @@ class TestGetStationDetailsData:
             "mcp_server_tempest.server.api_get_station_id",
             return_value=SAMPLE_SINGLE_STATION_DATA,
         ):
-            result = await _get_station_details_data(12345, mock_ctx, use_cache=False)
+            result = (await _get_station_details_data(12345, mock_ctx, use_cache=False)).data
             assert result.station_id == 12345
             mock_ctx.report_progress.assert_any_call(progress=1, total=1)
 
     async def test_returns_cached_data(self, mock_ctx):
         cache["station_id_12345"] = "cached_station"
-        result = await _get_station_details_data(12345, mock_ctx, use_cache=True)
+        result = (await _get_station_details_data(12345, mock_ctx, use_cache=True)).data
         assert result == "cached_station"
 
     async def test_different_station_ids_cached_separately(self, mock_ctx):
         cache["station_id_111"] = "station_a"
         cache["station_id_222"] = "station_b"
-        result_a = await _get_station_details_data(111, mock_ctx, use_cache=True)
-        result_b = await _get_station_details_data(222, mock_ctx, use_cache=True)
+        result_a = (await _get_station_details_data(111, mock_ctx, use_cache=True)).data
+        result_b = (await _get_station_details_data(222, mock_ctx, use_cache=True)).data
         assert result_a == "station_a"
         assert result_b == "station_b"
 
@@ -352,7 +360,7 @@ class TestGetStationDetailsData:
             "mcp_server_tempest.server.api_get_station_id",
             return_value=SAMPLE_SINGLE_STATION_DATA,
         ):
-            result = await _get_station_details_data(12345, None, use_cache=False)
+            result = (await _get_station_details_data(12345, None, use_cache=False)).data
             assert result.station_id == 12345
 
 
@@ -363,13 +371,13 @@ class TestGetForecastData:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await _get_forecast_data(12345, mock_ctx, use_cache=False)
+            result = (await _get_forecast_data(12345, mock_ctx, use_cache=False)).data
             assert result.location_name == "Seattle"
             mock_ctx.report_progress.assert_any_call(progress=1, total=1)
 
     async def test_returns_cached_data(self, mock_ctx):
         cache["forecast_12345"] = "cached_forecast"
-        result = await _get_forecast_data(12345, mock_ctx, use_cache=True)
+        result = (await _get_forecast_data(12345, mock_ctx, use_cache=True)).data
         assert result == "cached_forecast"
 
     async def test_handles_none_ctx(self):
@@ -377,7 +385,7 @@ class TestGetForecastData:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await _get_forecast_data(12345, None, use_cache=False)
+            result = (await _get_forecast_data(12345, None, use_cache=False)).data
             assert result.location_name == "Seattle"
 
 
@@ -388,13 +396,13 @@ class TestGetObservationData:
             "mcp_server_tempest.server.api_get_observation",
             return_value=SAMPLE_OBSERVATION_DATA,
         ):
-            result = await _get_observation_data(12345, mock_ctx, use_cache=False)
+            result = (await _get_observation_data(12345, mock_ctx, use_cache=False)).data
             assert result.station_id == 12345
             mock_ctx.report_progress.assert_any_call(progress=1, total=1)
 
     async def test_returns_cached_data(self, mock_ctx):
         cache["observation_12345"] = "cached_obs"
-        result = await _get_observation_data(12345, mock_ctx, use_cache=True)
+        result = (await _get_observation_data(12345, mock_ctx, use_cache=True)).data
         assert result == "cached_obs"
 
     async def test_handles_none_ctx(self):
@@ -402,7 +410,7 @@ class TestGetObservationData:
             "mcp_server_tempest.server.api_get_observation",
             return_value=SAMPLE_OBSERVATION_DATA,
         ):
-            result = await _get_observation_data(12345, None, use_cache=False)
+            result = (await _get_observation_data(12345, None, use_cache=False)).data
             assert result.station_id == 12345
 
 
@@ -435,7 +443,7 @@ class TestTools:
             "mcp_server_tempest.server.api_get_stations",
             return_value=SAMPLE_STATION_DATA,
         ):
-            result = await get_stations(ctx=mock_ctx)
+            result = _structured(await get_stations(ctx=mock_ctx))
             assert len(result["stations"]) == 1
 
     async def test_get_stations_error(self, mock_ctx):
@@ -458,7 +466,7 @@ class TestTools:
             "mcp_server_tempest.server.api_get_station_id",
             return_value=SAMPLE_SINGLE_STATION_DATA,
         ):
-            result = await get_station_details(station_id=12345, ctx=mock_ctx)
+            result = _structured(await get_station_details(station_id=12345, ctx=mock_ctx))
             assert result["station_id"] == 12345
 
     async def test_get_station_details_error(self, mock_ctx):
@@ -478,7 +486,7 @@ class TestTools:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(station_id=12345, ctx=mock_ctx)
+            result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
             assert result["location_name"] == "Seattle"
 
     async def test_get_forecast_error(self, mock_ctx):
@@ -498,7 +506,7 @@ class TestTools:
             "mcp_server_tempest.server.api_get_observation",
             return_value=SAMPLE_OBSERVATION_DATA,
         ):
-            result = await get_observation(station_id=12345, ctx=mock_ctx)
+            result = _structured(await get_observation(station_id=12345, ctx=mock_ctx))
             assert result["station_id"] == 12345
 
     async def test_get_observation_error(self, mock_ctx):
@@ -572,7 +580,7 @@ class TestFieldExclusion:
             "mcp_server_tempest.server.api_get_stations",
             return_value=SAMPLE_STATION_DATA,
         ):
-            result = await get_stations(ctx=mock_ctx)
+            result = _structured(await get_stations(ctx=mock_ctx))
             station = result["stations"][0]
             assert "created_epoch" not in station
             assert "last_modified_epoch" not in station
@@ -586,7 +594,7 @@ class TestFieldExclusion:
             "mcp_server_tempest.server.api_get_station_id",
             return_value=SAMPLE_SINGLE_STATION_DATA,
         ):
-            result = await get_station_details(station_id=12345, ctx=mock_ctx)
+            result = _structured(await get_station_details(station_id=12345, ctx=mock_ctx))
             assert "created_epoch" not in result
             assert "last_modified_epoch" not in result
 
@@ -595,7 +603,7 @@ class TestFieldExclusion:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(station_id=12345, detailed=True, ctx=mock_ctx)
+            result = _structured(await get_forecast(station_id=12345, detailed=True, ctx=mock_ctx))
             assert "icon" not in result["current_conditions"]
             for daily in result["forecast"]["daily"]:
                 assert "icon" not in daily
@@ -608,7 +616,9 @@ class TestFieldExclusion:
             "mcp_server_tempest.server.api_get_observation",
             return_value=SAMPLE_OBSERVATION_DATA,
         ):
-            result = await get_observation(station_id=12345, detailed=True, ctx=mock_ctx)
+            result = _structured(
+                await get_observation(station_id=12345, detailed=True, ctx=mock_ctx)
+            )
             assert "outdoor_keys" not in result
 
     def test_observation_summary_fields_match_model(self):
@@ -630,7 +640,7 @@ class TestForecastDepth:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(station_id=12345, ctx=mock_ctx)
+            result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
             # Summary mode defaults: min(12, 6)=6 hourly, min(5, 2)=2 daily
             assert len(result["forecast"]["hourly"]) == 6
             assert len(result["forecast"]["daily"]) == 2
@@ -640,7 +650,7 @@ class TestForecastDepth:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(station_id=12345, ctx=mock_ctx)
+            result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
             assert "latitude" not in result
             assert "longitude" not in result
             assert "timezone_offset_minutes" not in result
@@ -654,8 +664,8 @@ class TestForecastDepth:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(
-                station_id=12345, hours=6, days=3, detailed=True, ctx=mock_ctx
+            result = _structured(
+                await get_forecast(station_id=12345, hours=6, days=3, detailed=True, ctx=mock_ctx)
             )
             assert len(result["forecast"]["hourly"]) == 6
             assert len(result["forecast"]["daily"]) == 3
@@ -668,7 +678,7 @@ class TestForecastDepth:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(station_id=12345, detailed=True, ctx=mock_ctx)
+            result = _structured(await get_forecast(station_id=12345, detailed=True, ctx=mock_ctx))
             # Detailed defaults: 12 hourly, 5 daily
             assert len(result["forecast"]["hourly"]) == 12
             assert len(result["forecast"]["daily"]) == 5
@@ -678,8 +688,8 @@ class TestForecastDepth:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(
-                station_id=12345, hours=48, days=10, detailed=True, ctx=mock_ctx
+            result = _structured(
+                await get_forecast(station_id=12345, hours=48, days=10, detailed=True, ctx=mock_ctx)
             )
             assert len(result["forecast"]["hourly"]) == 48
             assert len(result["forecast"]["daily"]) == 10
@@ -689,7 +699,7 @@ class TestForecastDepth:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(station_id=12345, hours=3, ctx=mock_ctx)
+            result = _structured(await get_forecast(station_id=12345, hours=3, ctx=mock_ctx))
             # Summary mode: min(3, 6) = 3
             assert len(result["forecast"]["hourly"]) == 3
 
@@ -698,8 +708,8 @@ class TestForecastDepth:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(
-                station_id=12345, hours=1, days=1, detailed=True, ctx=mock_ctx
+            result = _structured(
+                await get_forecast(station_id=12345, hours=1, days=1, detailed=True, ctx=mock_ctx)
             )
             assert len(result["forecast"]["hourly"]) == 1
             assert len(result["forecast"]["daily"]) == 1
@@ -719,7 +729,7 @@ class TestEmptyData:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=empty_forecast,
         ):
-            result = await get_forecast(station_id=12345, ctx=mock_ctx)
+            result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
             assert result["forecast"]["daily"] == []
             assert result["forecast"]["hourly"] == []
 
@@ -732,7 +742,7 @@ class TestEmptyData:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=empty_forecast,
         ):
-            result = await get_forecast(station_id=12345, detailed=True, ctx=mock_ctx)
+            result = _structured(await get_forecast(station_id=12345, detailed=True, ctx=mock_ctx))
             assert result["forecast"]["daily"] == []
             assert result["forecast"]["hourly"] == []
 
@@ -742,7 +752,7 @@ class TestEmptyData:
             "mcp_server_tempest.server.api_get_observation",
             return_value=empty_obs,
         ):
-            result = await get_observation(station_id=12345, ctx=mock_ctx)
+            result = _structured(await get_observation(station_id=12345, ctx=mock_ctx))
             assert result["obs"] == []
 
     async def test_observation_empty_obs_detailed(self, mock_ctx):
@@ -751,7 +761,9 @@ class TestEmptyData:
             "mcp_server_tempest.server.api_get_observation",
             return_value=empty_obs,
         ):
-            result = await get_observation(station_id=12345, detailed=True, ctx=mock_ctx)
+            result = _structured(
+                await get_observation(station_id=12345, detailed=True, ctx=mock_ctx)
+            )
             assert result["obs"] == []
 
 
@@ -766,7 +778,7 @@ class TestSummaryModeCaps:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(station_id=12345, hours=10, ctx=mock_ctx)
+            result = _structured(await get_forecast(station_id=12345, hours=10, ctx=mock_ctx))
             assert len(result["forecast"]["hourly"]) == 6
             assert result["truncated"] is True
             assert result["requested_hours"] == 10
@@ -779,7 +791,7 @@ class TestSummaryModeCaps:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(station_id=12345, days=8, ctx=mock_ctx)
+            result = _structured(await get_forecast(station_id=12345, days=8, ctx=mock_ctx))
             assert len(result["forecast"]["daily"]) == 2
             assert result["truncated"] is True
             assert result["requested_days"] == 8
@@ -804,7 +816,9 @@ class TestForecastTruncationFields:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(station_id=12345, hours=3, days=2, ctx=mock_ctx)
+            result = _structured(
+                await get_forecast(station_id=12345, hours=3, days=2, ctx=mock_ctx)
+            )
             assert result["truncated"] is False
             assert result["requested_hours"] == 3
             assert result["requested_days"] == 2
@@ -822,8 +836,8 @@ class TestForecastTruncationFields:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(
-                station_id=12345, hours=24, days=7, detailed=True, ctx=mock_ctx
+            result = _structured(
+                await get_forecast(station_id=12345, hours=24, days=7, detailed=True, ctx=mock_ctx)
             )
             assert result["truncated"] is False
             assert result["requested_hours"] == 24
@@ -838,7 +852,7 @@ class TestForecastTruncationFields:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
-            result = await get_forecast(station_id=12345, ctx=mock_ctx)
+            result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
             assert result["truncated"] is True
             assert result["requested_hours"] == 12
             assert result["requested_days"] == 5
@@ -864,8 +878,8 @@ class TestForecastTruncationFields:
             "mcp_server_tempest.server.api_get_forecast",
             return_value=short_forecast,
         ):
-            result = await get_forecast(
-                station_id=12345, hours=24, days=7, detailed=True, ctx=mock_ctx
+            result = _structured(
+                await get_forecast(station_id=12345, hours=24, days=7, detailed=True, ctx=mock_ctx)
             )
             assert result["truncated"] is True
             assert result["requested_hours"] == 24
@@ -887,7 +901,7 @@ class TestForecastTruncationFields:
                 {"hours": 1, "days": 1, "detailed": True},
                 {"hours": 1, "days": 1, "detailed": False},
             ):
-                result = await get_forecast(station_id=12345, ctx=mock_ctx, **kwargs)
+                result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx, **kwargs))
                 for key in (
                     "truncated",
                     "requested_hours",
@@ -1058,7 +1072,7 @@ class TestObservationSummaryDetailed:
             "mcp_server_tempest.server.api_get_observation",
             return_value=SAMPLE_OBSERVATION_DATA,
         ):
-            result = await get_observation(station_id=12345, ctx=mock_ctx)
+            result = _structured(await get_observation(station_id=12345, ctx=mock_ctx))
             obs = result["obs"][0]
             for field in (
                 "heat_index",
@@ -1088,7 +1102,7 @@ class TestObservationSummaryDetailed:
             "mcp_server_tempest.server.api_get_observation",
             return_value=SAMPLE_OBSERVATION_DATA,
         ):
-            result = await get_observation(station_id=12345, ctx=mock_ctx)
+            result = _structured(await get_observation(station_id=12345, ctx=mock_ctx))
             assert "latitude" not in result
             assert "longitude" not in result
             assert "elevation" not in result
@@ -1104,7 +1118,9 @@ class TestObservationSummaryDetailed:
             "mcp_server_tempest.server.api_get_observation",
             return_value=SAMPLE_OBSERVATION_DATA,
         ):
-            result = await get_observation(station_id=12345, detailed=True, ctx=mock_ctx)
+            result = _structured(
+                await get_observation(station_id=12345, detailed=True, ctx=mock_ctx)
+            )
             obs = result["obs"][0]
             assert "heat_index" in obs
             assert "wind_chill" in obs
@@ -1115,6 +1131,33 @@ class TestObservationSummaryDetailed:
             # detailed keeps location metadata
             assert "latitude" in result
             assert "longitude" in result
+
+
+async def test_observation_summary_drops_null_optionals():
+    import copy
+
+    from mcp_server_tempest.server import get_observation
+
+    sample = copy.deepcopy(SAMPLE_OBSERVATION_DATA)
+    sample["obs"][0]["lightning_strike_last_epoch"] = None
+    sample["obs"][0]["lightning_strike_last_distance"] = None
+
+    with patch(
+        "mcp_server_tempest.server.api_get_observation",
+        new=AsyncMock(return_value=sample),
+    ):
+        with patch.dict(os.environ, {"WEATHERFLOW_API_TOKEN": "t"}):
+            cache.clear()
+            summary = _structured(await get_observation(station_id=12345))
+            cache.clear()
+            detailed = _structured(await get_observation(station_id=12345, detailed=True))
+
+    s_obs = summary["obs"][0]
+    d_obs = detailed["obs"][0]
+    assert all(v is not None for v in s_obs.values())  # no nulls in summary
+    assert "lightning_strike_last_epoch" not in s_obs  # the null optional was dropped
+    assert "lightning_strike_last_epoch" in d_obs  # detailed keeps it (as None)
+    assert set(d_obs.keys()) >= set(s_obs.keys())
 
 
 # -- Tests for health check --
@@ -1142,10 +1185,10 @@ class TestServerInstructions:
     def test_instructions_lists_each_tool(self):
         text = mcp.instructions
         for tool_name in (
-            "get_stations",
-            "get_station_details",
-            "get_observation",
-            "get_forecast",
+            "tempest_get_stations",
+            "tempest_get_station_details",
+            "tempest_get_observation",
+            "tempest_get_forecast",
         ):
             assert tool_name in text, f"{tool_name} missing from instructions"
 
@@ -1208,10 +1251,10 @@ class TestMcpRegistry:
     """
 
     EXPECTED_TOOLS = {
-        "get_stations",
-        "get_station_details",
-        "get_forecast",
-        "get_observation",
+        "tempest_get_stations",
+        "tempest_get_station_details",
+        "tempest_get_forecast",
+        "tempest_get_observation",
     }
 
     REMOVED_TOOLS = {
@@ -1228,10 +1271,12 @@ class TestMcpRegistry:
         leaked = self.REMOVED_TOOLS & names
         assert not leaked, f"removed tools reintroduced: {leaked}"
 
-    async def test_no_resources_registered(self):
-        # The 0.4.0 release dropped the public weather://tempest/... resources;
-        # they should not come back without an explicit decision.
-        assert await mcp.list_resources() == []
+    async def test_capabilities_resource_registered(self):
+        # The 0.4.0 release dropped the public weather://tempest/... resources.
+        # The tempest://capabilities discovery resource was added in 0.7.0.
+        resources = await mcp.list_resources()
+        uris = {str(r.uri) for r in resources}
+        assert uris == {"tempest://capabilities"}
         assert await mcp.list_resource_templates() == []
 
 
@@ -1265,9 +1310,9 @@ class TestToolErrorDocstrings:
 
     def test_station_scoped_tools_list_codes(self):
         for tool, name in (
-            (get_station_details, "get_station_details"),
-            (get_forecast, "get_forecast"),
-            (get_observation, "get_observation"),
+            (get_station_details, "tempest_get_station_details"),
+            (get_forecast, "tempest_get_forecast"),
+            (get_observation, "tempest_get_observation"),
         ):
             doc = tool.__doc__ or ""
             assert "Errors:" in doc, f"{name} missing Errors: block"
@@ -1375,7 +1420,7 @@ class TestDiskCacheIntegration:
         dc.set("stations", stations_data)
 
         with patch.object(server_module, "_get_disk_cache", return_value=dc):
-            result = await _get_stations_data(mock_ctx, use_cache=True)
+            result = (await _get_stations_data(mock_ctx, use_cache=True)).data
             assert result.stations[0].station_id == 12345
             mock_ctx.info.assert_called_with("Using disk-cached station data")
 
@@ -1413,7 +1458,7 @@ class TestDiskCacheIntegration:
         dc.set("station_id_12345", station_data)
 
         with patch.object(server_module, "_get_disk_cache", return_value=dc):
-            result = await _get_station_details_data(12345, mock_ctx, use_cache=True)
+            result = (await _get_station_details_data(12345, mock_ctx, use_cache=True)).data
             assert result.station_id == 12345
             mock_ctx.info.assert_called_with("Using disk-cached station data for station 12345")
 
@@ -1532,3 +1577,68 @@ class TestDispatch:
             except ToolError as te:
                 rids.append(json.loads(te.args[0])["request_id"])
         assert len(set(rids)) == 5
+
+
+# -- Tests for _meta on tool results --
+
+
+async def test_observation_meta_reports_miss_and_fingerprint():
+    from mcp_server_tempest.server import _FINGERPRINT, get_observation
+
+    with patch(
+        "mcp_server_tempest.server.api_get_observation",
+        new=AsyncMock(return_value=SAMPLE_OBSERVATION_DATA),
+    ):
+        with patch.dict(os.environ, {"WEATHERFLOW_API_TOKEN": "t"}):
+            cache.clear()
+            result = await get_observation(station_id=12345)
+
+    assert result.meta["cache"] == "miss"
+    assert result.meta["fingerprint"] == _FINGERPRINT
+    assert result.meta["ts_retrieved"].endswith(("+00:00", "Z"))
+
+
+async def test_observation_meta_reports_memory_hit():
+    from mcp_server_tempest.server import get_observation
+
+    with patch(
+        "mcp_server_tempest.server.api_get_observation",
+        new=AsyncMock(return_value=SAMPLE_OBSERVATION_DATA),
+    ):
+        with patch.dict(os.environ, {"WEATHERFLOW_API_TOKEN": "t"}):
+            cache.clear()
+            await get_observation(station_id=12345)  # populate
+            result = await get_observation(station_id=12345)  # hit
+
+    assert result.meta["cache"] == "memory"
+
+
+def test_validated_rejects_drifted_dict():
+    # Drift = a dict that violates the locked output schema. _validated must
+    # raise internal_error rather than ship it (the _meta path bypasses the
+    # server's own output validation; _validated is the safety net).
+    from mcp_server_tempest.server import Fetched, _validated
+
+    fetched = Fetched(data=None, cache="miss", ts_epoch=1.0)
+    with pytest.raises(WeatherFlowError) as exc:
+        _validated("observation", {"NOT_A_REAL_FIELD": 1}, fetched)
+    assert exc.value.code == ErrorCode.INTERNAL_ERROR
+
+
+async def test_observation_structured_content_conforms_to_advertised_schema():
+    import fastmcp
+    from jsonschema import Draft202012Validator
+
+    from mcp_server_tempest.server import mcp
+
+    with patch(
+        "mcp_server_tempest.server.api_get_observation",
+        new=AsyncMock(return_value=SAMPLE_OBSERVATION_DATA),
+    ):
+        with patch.dict(os.environ, {"WEATHERFLOW_API_TOKEN": "t"}):
+            cache.clear()
+            async with fastmcp.Client(mcp) as c:
+                tool = next(t for t in await c.list_tools() if t.name == "tempest_get_observation")
+                r = await c.call_tool("tempest_get_observation", {"station_id": 12345})
+    # The emitted structured content validates against the schema the tool advertises.
+    Draft202012Validator(tool.outputSchema).validate(r.structured_content)

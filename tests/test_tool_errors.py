@@ -35,10 +35,12 @@ def _set_token():
 @pytest.fixture(autouse=True)
 def _clear_cache():
     cache.clear()
+    server_module._fetch_times.clear()
     server_module.disk_cache = None
     with patch.object(server_module, "_get_disk_cache", return_value=None):
         yield
     cache.clear()
+    server_module._fetch_times.clear()
     server_module.disk_cache = None
 
 
@@ -95,12 +97,12 @@ class TestAuthForbiddenBoundary:
                 code=ErrorCode.AUTH_FORBIDDEN,
                 message="no access",
                 hint="verify ownership",
-                next={"tool": "get_stations"},
+                next={"tool": "tempest_get_stations"},
             ),
         ):
             payload = await _payload_from(lambda: get_observation(station_id=12345))
         assert payload["code"] == "auth_forbidden"
-        assert payload["next"] == {"tool": "get_stations"}
+        assert payload["next"] == {"tool": "tempest_get_stations"}
 
     async def test_403_on_get_stations_no_next(self):
         with patch(
@@ -123,17 +125,17 @@ class TestStationNotFoundBoundary:
             side_effect=WeatherFlowError(
                 code=ErrorCode.STATION_NOT_FOUND,
                 message="not found",
-                hint="call get_stations",
+                hint="call tempest_get_stations",
                 field_name="station_id",
                 value=99999,
-                next={"tool": "get_stations"},
+                next={"tool": "tempest_get_stations"},
             ),
         ):
             payload = await _payload_from(lambda: get_observation(station_id=99999))
         assert payload["code"] == "station_not_found"
         assert payload["field"] == "station_id"
         assert payload["value"] == 99999
-        assert payload["next"] == {"tool": "get_stations"}
+        assert payload["next"] == {"tool": "tempest_get_stations"}
 
 
 class TestRateLimitedBoundary:

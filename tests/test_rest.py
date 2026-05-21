@@ -144,7 +144,7 @@ class TestTranslateResponseError:
         for op in _STATION_SCOPED:
             wfe = _translate_response_error(e, operation=op)
             assert wfe.code is ErrorCode.AUTH_FORBIDDEN
-            assert wfe.next == {"tool": "get_stations"}
+            assert wfe.next == {"tool": "tempest_get_stations"}
             assert "station" in wfe.message.lower()
 
     def test_403_stations_op_no_next(self):
@@ -161,7 +161,7 @@ class TestTranslateResponseError:
             assert wfe.code is ErrorCode.STATION_NOT_FOUND
             assert wfe.field_name == "station_id"
             assert wfe.value == 12345
-            assert wfe.next == {"tool": "get_stations"}
+            assert wfe.next == {"tool": "tempest_get_stations"}
 
     def test_404_stations_op_is_invalid_response(self):
         # 404 on the /stations endpoint isn't "no such station" — it's an
@@ -344,7 +344,7 @@ class TestApiGetForecastErrorMapping:
             with pytest.raises(WeatherFlowError) as excinfo:
                 await api_get_forecast(12345, "fake-token")
             assert excinfo.value.code is ErrorCode.AUTH_FORBIDDEN
-            assert excinfo.value.next == {"tool": "get_stations"}
+            assert excinfo.value.next == {"tool": "tempest_get_stations"}
 
 
 class TestApiGetObservationErrorMapping:

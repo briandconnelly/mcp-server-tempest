@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-20
+
+### Breaking
+
+- All four tools are now published under `tempest_`-prefixed wire names:
+  `tempest_get_stations`, `tempest_get_station_details`,
+  `tempest_get_observation`, `tempest_get_forecast`. Clients must update
+  any hardcoded tool-call names; the old unprefixed names are gone.
+
+### Added
+
+- `invalid_argument` structured error code for malformed tool arguments,
+  raised by a contract middleware before the tool body runs. Clients receive
+  the same flat JSON payload as all other errors, with `field` and `value`
+  populated where applicable.
+- `tempest://capabilities` discovery resource: a machine-readable summary of
+  available tools, error codes, surface fingerprint, and server version.
+  Agents can fetch this once to orient themselves without loading individual
+  tool schemas.
+- Surface fingerprint derived from the installed package version, exposed in
+  the capabilities resource and in every tool result's `_meta.fingerprint`.
+  Agents can detect server upgrades by comparing fingerprints across calls.
+- Native `_meta` block on every tool result carrying `cache` state,
+  `ts_retrieved` (RFC 3339 UTC timestamp of the underlying data fetch), and
+  `fingerprint`. Clients that ignore `_meta` are unaffected.
+- JSON Schema `$schema` dialect URI declared on all tool input and output
+  schemas (`https://json-schema.org/draft/2020-12/schema`).
+
+### Changed
+
+- Concise (default) observation and forecast responses now omit null-valued
+  optional fields to save tokens. Pass `detailed=True` to restore full
+  fidelity with all fields present regardless of value.
+
 ## [0.6.0] - 2026-05-09
 
 ### Added

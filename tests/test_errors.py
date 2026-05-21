@@ -14,6 +14,7 @@ class TestErrorCode:
             "auth_missing",
             "auth_invalid",
             "auth_forbidden",
+            "invalid_argument",
             "station_not_found",
             "rate_limited",
             "upstream_unavailable",
@@ -107,6 +108,29 @@ class TestWeatherFlowErrorPayload:
         wfe = WeatherFlowError(code=ErrorCode.AUTH_INVALID, message="bad token")
         assert str(wfe) == "bad token"
         assert wfe.args == ("bad token",)
+
+
+def test_invalid_argument_code_is_nontemporary_and_carries_field():
+    from mcp_server_tempest.errors import ErrorCode, WeatherFlowError
+
+    payload = WeatherFlowError(
+        code=ErrorCode.INVALID_ARGUMENT,
+        message="bad arg",
+        field_name="station_id",
+        value=-5,
+    ).to_payload("rid123")
+    assert payload["code"] == "invalid_argument"
+    assert payload["temporary"] is False
+    assert payload["field"] == "station_id"
+    assert payload["value"] == -5
+
+
+def test_new_request_id_is_16_hex_chars():
+    from mcp_server_tempest.errors import _new_request_id
+
+    rid = _new_request_id()
+    assert len(rid) == 16
+    int(rid, 16)  # parses as hex
 
 
 class TestWeatherFlowErrorToolError:
