@@ -61,7 +61,7 @@ from starlette.responses import JSONResponse
 
 from .cache import DiskCache
 from .errors import ErrorCode, WeatherFlowError, _new_request_id
-from .middleware import TempestContractMiddleware
+from .middleware import JSON_SCHEMA_DIALECT, TempestContractMiddleware
 from .models import (
     ForecastResponse,
     ObservationResponse,
@@ -387,6 +387,11 @@ def _relaxed_schema(
 
     _lock_additional_properties(schema)
 
+    # Stamp the dialect at generation time (not only via the on_list_tools
+    # middleware) so the advertised output schema and the fingerprinted schema
+    # are identical — the fingerprint genuinely covers the declared dialect.
+    schema["$schema"] = JSON_SCHEMA_DIALECT
+
     return schema
 
 
@@ -567,7 +572,8 @@ def _build_capabilities() -> dict:
             "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for all tools; disk "
             "(WEATHERFLOW_DISK_CACHE_TTL, default 86400s) for stations and "
             "station_details. Each tool result carries _meta.cache and "
-            "_meta.ts_retrieved."
+            "_meta.fingerprint; _meta.ts_retrieved is included when the fetch "
+            "time is known (it may be omitted on some cache hits)."
         ),
     }
 
