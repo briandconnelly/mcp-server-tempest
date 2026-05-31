@@ -12,11 +12,11 @@ jobs:
   bundle:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8
+      - uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Sync project
         run: uv sync --group dev
@@ -52,7 +52,7 @@ jobs:
         run: gh release upload "${{ github.event.release.tag_name }}" dist/mcp-server-tempest.mcpb --clobber
 
       - name: Upload bundle as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mcp-server-tempest-mcpb
           path: dist/mcp-server-tempest.mcpb
