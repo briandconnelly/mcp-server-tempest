@@ -40,7 +40,7 @@ jobs:
           contents="$(unzip -Z1 dist/mcp-server-tempest.mcpb)"
           echo "$contents"
           if echo "$contents" | grep -E -i \
-            '(^|/)(\.env$|\.git/|\.venv/|tests/|__pycache__/|\.coverage$|\.pytest_cache/|\.ruff_cache/)'; then
+            '(^|/)(\.env$|\.git/|\.github/|\.venv/|tests/|docs/|scripts/|Makefile$|prek\.toml$|NOTES\.md$|__pycache__/|\.coverage$|\.pytest_cache/|\.ruff_cache/)'; then
             echo "::error::Forbidden path found in .mcpb bundle"
             exit 1
           fi
