@@ -1,0 +1,58 @@
+name: Build MCPB bundle
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write # upload the .mcpb asset to the release
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Sync project
+        run: uv sync --group dev
+
+      - name: Verify manifest is in sync
+        run: uv run python scripts/gen_manifest.py --check
+
+      - name: Install mcpb CLI
+        run: npm install -g @anthropic-ai/mcpb
+
+      - name: Validate manifest
+        run: mcpb validate manifest.json
+
+      - name: Pack bundle
+        run: |
+          mkdir -p dist
+          mcpb pack . dist/mcp-server-tempest.mcpb
+
+      - name: Assert bundle excludes secrets and dev files
+        run: |
+          contents="$(unzip -Z1 dist/mcp-server-tempest.mcpb)"
+          echo "$contents"
+          if echo "$contents" | grep -E -i \
+            '(^|/)(\.env$|\.git/|\.venv/|tests/|__pycache__/|\.coverage$|\.pytest_cache/|\.ruff_cache/)'; then
+            echo "::error::Forbidden path found in .mcpb bundle"
+            exit 1
+          fi
+
+      - name: Upload bundle to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/mcp-server-tempest.mcpb --clobber
+
+      - name: Upload bundle as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-server-tempest-mcpb
+          path: dist/mcp-server-tempest.mcpb

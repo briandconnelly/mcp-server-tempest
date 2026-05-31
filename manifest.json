@@ -1,0 +1,106 @@
+{
+  "manifest_version": "0.4",
+  "name": "mcp-server-tempest",
+  "display_name": "WeatherFlow Tempest",
+  "version": "0.7.0",
+  "description": "MCP Server for Retrieving Tempest Weather Data",
+  "author": {
+    "name": "Brian Connelly",
+    "email": "bdc@bconnelly.net"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/briandconnelly/mcp-server-tempest"
+  },
+  "homepage": "https://github.com/briandconnelly/mcp-server-tempest",
+  "documentation": "https://weatherflow.github.io/Tempest/api/",
+  "support": "https://github.com/briandconnelly/mcp-server-tempest/issues",
+  "license": "MIT",
+  "keywords": [
+    "weather",
+    "tempest",
+    "weatherflow",
+    "mcp"
+  ],
+  "server": {
+    "type": "uv",
+    "entry_point": "src/mcp_server_tempest/__main__.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${__dirname}",
+        "--frozen",
+        "--no-dev",
+        "python",
+        "-m",
+        "mcp_server_tempest"
+      ],
+      "env": {
+        "WEATHERFLOW_API_TOKEN": "${user_config.api_token}",
+        "WEATHERFLOW_CACHE_TTL": "${user_config.cache_ttl}",
+        "WEATHERFLOW_CACHE_SIZE": "${user_config.cache_size}",
+        "WEATHERFLOW_DISK_CACHE_TTL": "${user_config.disk_cache_ttl}"
+      }
+    }
+  },
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ],
+    "runtimes": {
+      "python": ">=3.13"
+    }
+  },
+  "user_config": {
+    "api_token": {
+      "type": "string",
+      "title": "WeatherFlow API Token",
+      "description": "Personal token from https://tempestwx.com/settings/tokens",
+      "sensitive": true,
+      "required": true
+    },
+    "cache_ttl": {
+      "type": "number",
+      "title": "In-memory cache TTL (seconds)",
+      "description": "How long tool responses are cached in memory.",
+      "default": 300,
+      "required": false
+    },
+    "cache_size": {
+      "type": "number",
+      "title": "Max in-memory cache entries",
+      "description": "Maximum number of cached responses held in memory.",
+      "default": 100,
+      "required": false
+    },
+    "disk_cache_ttl": {
+      "type": "number",
+      "title": "Disk cache TTL (seconds)",
+      "description": "How long station/details responses persist on disk.",
+      "default": 86400,
+      "required": false
+    }
+  },
+  "tools": [
+    {
+      "name": "tempest_get_stations",
+      "description": "List the user's stations, devices, capabilities."
+    },
+    {
+      "name": "tempest_get_station_details",
+      "description": "Deep config/hardware/location for one station."
+    },
+    {
+      "name": "tempest_get_observation",
+      "description": "Current conditions for one station."
+    },
+    {
+      "name": "tempest_get_forecast",
+      "description": "Hourly + daily forecast plus a current snapshot."
+    }
+  ]
+}
