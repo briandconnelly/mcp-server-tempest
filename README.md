@@ -51,10 +51,13 @@ Just add an additional `--from` argument:
 For one-click installation in apps that support [MCP Bundles](https://github.com/modelcontextprotocol/mcpb/)
 (e.g. Claude for macOS/Windows):
 
-1. Download `mcp-server-tempest.mcpb` from the
+1. Download the `.mcpb` from the
    [latest release](https://github.com/briandconnelly/mcp-server-tempest/releases).
 2. Open the file with your MCPB-capable client to launch the install dialog.
 3. Paste your WeatherFlow API token when prompted (the cache settings are optional).
+4. Make sure the extension is **enabled** (in Claude Desktop: Settings →
+   Extensions). It is not turned on automatically until the required API token
+   has been provided.
 
 The bundle uses the MCPB `uv` runtime (`manifest_version` `0.4`), so the host
 must ship a recent enough `uv`/MCPB runtime; it resolves dependencies on first
