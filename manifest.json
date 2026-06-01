@@ -8,6 +8,7 @@
     "name": "Brian Connelly",
     "email": "bdc@bconnelly.net"
   },
+  "icon": "icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/briandconnelly/mcp-server-tempest"

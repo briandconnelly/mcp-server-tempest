@@ -51,6 +51,7 @@ def build_manifest() -> dict:
         "version": project["version"],
         "description": project["description"],
         "author": {"name": author["name"], "email": author["email"]},
+        "icon": "icon.png",
         "repository": {"type": "git", "url": REPO_URL},
         "homepage": REPO_URL,
         "documentation": "https://weatherflow.github.io/Tempest/api/",
