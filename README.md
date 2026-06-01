@@ -46,6 +46,26 @@ Just add an additional `--from` argument:
 | **Environment** | `WEATHERFLOW_API_TOKEN` = `<YOUR TOKEN>` |
 
 
+### Install as a Desktop Extension (`.mcpb`)
+
+For one-click installation in apps that support [MCP Bundles](https://github.com/modelcontextprotocol/mcpb/)
+(e.g. Claude for macOS/Windows):
+
+1. Download `mcp-server-tempest.mcpb` from the
+   [latest release](https://github.com/briandconnelly/mcp-server-tempest/releases).
+2. Open the file with your MCPB-capable client to launch the install dialog.
+3. Paste your WeatherFlow API token when prompted (the cache settings are optional).
+
+The bundle uses the MCPB `uv` runtime (`manifest_version` `0.4`), so the host
+must ship a recent enough `uv`/MCPB runtime; it resolves dependencies on first
+launch — no separate Python install is required.
+
+> **Troubleshooting:** if the server fails to start because its install
+> directory is read-only (uv cannot create a `.venv` next to the bundle), set
+> the `UV_PROJECT_ENVIRONMENT` environment variable for the server to a writable
+> path before launching.
+
+
 ## 📋 Configuration
 
 ### Environment Variables

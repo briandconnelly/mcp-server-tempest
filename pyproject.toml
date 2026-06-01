@@ -47,6 +47,13 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# icon.png is for the MCPB bundle only (referenced by manifest.json and packed
+# by `mcpb pack`). Keep it out of the published Python package: it is already
+# absent from the wheel (built from src/), so this only needs to exclude it
+# from the sdist, which otherwise ships all root files.
+[tool.hatch.build.targets.sdist]
+exclude = ["icon.png"]
+
 [tool.ruff]
 target-version = "py313"
 line-length = 100

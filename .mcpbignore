@@ -1,0 +1,36 @@
+# Keep the .mcpb bundle minimal: ship only what `uv run` needs at runtime
+# (manifest.json, pyproject.toml, uv.lock, src/, README.md, LICENSE).
+# Everything below must never end up in the archive — see the forbidden-paths
+# assertion in .github/workflows/mcpb.yml. In particular .env holds a token.
+
+.env
+.git/
+.github/
+.venv/
+venv/
+dist/
+build/
+wheels/
+*.egg-info/
+
+# Tests, docs, dev tooling, local scratch
+tests/
+docs/
+scripts/
+Makefile
+prek.toml
+NOTES.md
+.agents/
+.claude/
+.ipynb_checkpoints/
+
+# Caches and build artifacts
+__pycache__/
+*.py[oc]
+.ruff_cache/
+.pytest_cache/
+.coverage
+*.mcpb
+
+# OS cruft
+.DS_Store
