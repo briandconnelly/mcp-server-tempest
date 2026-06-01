@@ -30,14 +30,19 @@ jobs:
       - name: Validate manifest
         run: mcpb validate manifest.json
 
+      - name: Compute versioned bundle path
+        run: |
+          version="$(python -c 'import json; print(json.load(open("manifest.json"))["version"])')"
+          echo "BUNDLE=dist/mcp-server-tempest-${version}.mcpb" >> "$GITHUB_ENV"
+
       - name: Pack bundle
         run: |
           mkdir -p dist
-          mcpb pack . dist/mcp-server-tempest.mcpb
+          mcpb pack . "$BUNDLE"
 
       - name: Assert bundle excludes secrets and dev files
         run: |
-          contents="$(unzip -Z1 dist/mcp-server-tempest.mcpb)"
+          contents="$(unzip -Z1 "$BUNDLE")"
           echo "$contents"
           if echo "$contents" | grep -E -i \
             '(^|/)(\.env$|\.git/|\.github/|\.venv/|tests/|docs/|scripts/|Makefile$|prek\.toml$|NOTES\.md$|__pycache__/|\.coverage$|\.pytest_cache/|\.ruff_cache/)'; then
@@ -49,10 +54,10 @@ jobs:
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/mcp-server-tempest.mcpb --clobber
+        run: gh release upload "${{ github.event.release.tag_name }}" "$BUNDLE" --clobber
 
       - name: Upload bundle as workflow artifact
         uses: actions/upload-artifact@v7
         with:
           name: mcp-server-tempest-mcpb
-          path: dist/mcp-server-tempest.mcpb
+          path: ${{ env.BUNDLE }}
