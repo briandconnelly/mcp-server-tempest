@@ -56,8 +56,6 @@ from fastmcp.exceptions import ToolError
 from fastmcp.tools.base import ToolResult
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel, Field
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 from .cache import DiskCache
 from .errors import ErrorCode, WeatherFlowError, _new_request_id
@@ -453,12 +451,82 @@ _OBSERVATION_SCHEMA = _relaxed_schema(
 )
 
 
+# Static, agent-visible capability contract. Folded into the fingerprint (see
+# _compute_fingerprint) so any change to this prose — scope, negative scope,
+# tool purposes, the error envelope — moves the fingerprint, and served
+# verbatim by the tempest://capabilities resource. Excludes the
+# self-referential `fingerprint` and the already-fingerprinted `version` /
+# `error_codes`, which _build_capabilities() adds back at serve time.
+_CAPABILITY_CONTRACT: dict = {
+    "name": "WeatherFlow Tempest",
+    "transport": "stdio",
+    "scope": (
+        "Read-only access to the user's own WeatherFlow Tempest station(s) — "
+        "not a global weather service."
+    ),
+    "not_in_scope": [
+        "Global, regional, or arbitrary-location weather — use a public weather API",
+        "Air quality, pollen, smoke index",
+        "Severe-weather alerts, radar imagery, watches/warnings",
+        "Historical/archive analysis beyond the live API",
+    ],
+    "tools": [
+        {
+            "name": "tempest_get_stations",
+            "purpose": "List the user's stations, devices, capabilities.",
+        },
+        {
+            "name": "tempest_get_station_details",
+            "purpose": "Deep config/hardware/location for one station.",
+        },
+        {
+            "name": "tempest_get_observation",
+            "purpose": "Current conditions for one station.",
+        },
+        {
+            "name": "tempest_get_forecast",
+            "purpose": "Hourly + daily forecast plus a current snapshot.",
+        },
+    ],
+    "error_channel": (
+        "Errors arrive as an isError tool result whose text content is a JSON "
+        "object: {code, message, temporary, request_id} plus optional hint, "
+        "field, value, next, retry_after_ms, details. Branch on `code` (see "
+        "error_codes); do not parse `message`."
+    ),
+    "fingerprint_covers": (
+        "version, wire tool names, output schemas, error codes, instructions, "
+        "and this capability contract (scope, tool purposes, error channel, "
+        "latency). Input-schema changes are reflected only via a version bump."
+    ),
+    "latency": (
+        "Each tool makes at most one upstream WeatherFlow call with a 15s total "
+        "timeout; a breach returns upstream_unavailable (temporary). Cached "
+        "reads return immediately."
+    ),
+    "timestamps": (
+        "Upstream weather timestamps are Unix epoch seconds, as provided by "
+        "WeatherFlow; interpret local-time fields with the station's IANA "
+        "`timezone`. Server-generated timestamps (e.g. _meta.ts_retrieved) "
+        "are RFC3339 UTC."
+    ),
+    "caching": (
+        "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for all tools; disk "
+        "(WEATHERFLOW_DISK_CACHE_TTL, default 86400s) for stations and "
+        "station_details. Each tool result carries _meta.cache and "
+        "_meta.fingerprint; _meta.ts_retrieved is included when the fetch "
+        "time is known (it may be omitted on some cache hits)."
+    ),
+}
+
+
 def _compute_fingerprint() -> str:
     """Deterministic hash of the agent-visible authored surface.
 
-    Covers: package version, wire tool names, output schemas, error codes, and
-    the instructions text (scope/negative-scope/selection). Input schemas are
-    NOT hashed directly — an input-contract change requires a version bump,
+    Covers: package version, wire tool names, output schemas, error codes, the
+    instructions text, and the capability contract (_CAPABILITY_CONTRACT —
+    scope/negative-scope/tool purposes/error channel/latency). Input schemas
+    are NOT hashed directly — an input-contract change requires a version bump,
     which moves this fingerprint. Stated in capabilities.fingerprint_covers.
     """
     surface = json.dumps(
@@ -480,6 +548,7 @@ def _compute_fingerprint() -> str:
             },
             "error_codes": sorted(c.value for c in ErrorCode),
             "instructions": _INSTRUCTIONS,
+            "capability_contract": _CAPABILITY_CONTRACT,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -524,57 +593,15 @@ def _validated(schema_key: str, result: dict, fetched: Fetched) -> ToolResult:
 
 
 def _build_capabilities() -> dict:
+    # The static contract (_CAPABILITY_CONTRACT) is fingerprinted; version,
+    # fingerprint, and error_codes are stamped in at serve time. error_codes
+    # is sorted here from the live ErrorCode enum (the fingerprint hashes the
+    # same sorted list separately), so the two can never disagree.
     return {
-        "name": "WeatherFlow Tempest",
+        **_CAPABILITY_CONTRACT,
         "version": _PKG_VERSION,
         "fingerprint": _FINGERPRINT,
-        "fingerprint_covers": (
-            "version, wire tool names, output schemas, error codes, instructions. "
-            "Input-schema changes are reflected only via a version bump."
-        ),
-        "transport": "stdio",
-        "scope": (
-            "Read-only access to the user's own WeatherFlow Tempest station(s) — "
-            "not a global weather service."
-        ),
-        "not_in_scope": [
-            "Global, regional, or arbitrary-location weather — use a public weather API",
-            "Air quality, pollen, smoke index",
-            "Severe-weather alerts, radar imagery, watches/warnings",
-            "Historical/archive analysis beyond the live API",
-        ],
-        "tools": [
-            {
-                "name": "tempest_get_stations",
-                "purpose": "List the user's stations, devices, capabilities.",
-            },
-            {
-                "name": "tempest_get_station_details",
-                "purpose": "Deep config/hardware/location for one station.",
-            },
-            {
-                "name": "tempest_get_observation",
-                "purpose": "Current conditions for one station.",
-            },
-            {
-                "name": "tempest_get_forecast",
-                "purpose": "Hourly + daily forecast plus a current snapshot.",
-            },
-        ],
         "error_codes": sorted(c.value for c in ErrorCode),
-        "timestamps": (
-            "Upstream weather timestamps are Unix epoch seconds, as provided by "
-            "WeatherFlow; interpret local-time fields with the station's IANA "
-            "`timezone`. Server-generated timestamps (e.g. _meta.ts_retrieved) "
-            "are RFC3339 UTC."
-        ),
-        "caching": (
-            "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for all tools; disk "
-            "(WEATHERFLOW_DISK_CACHE_TTL, default 86400s) for stations and "
-            "station_details. Each tool result carries _meta.cache and "
-            "_meta.fingerprint; _meta.ts_retrieved is included when the fetch "
-            "time is known (it may be omitted on some cache hits)."
-        ),
     }
 
 
@@ -648,6 +675,28 @@ _OBSERVATION_SUMMARY_FIELDS: set[str] = {
 }
 
 
+async def _notify_info(ctx: Context | None, message: str) -> None:
+    """Best-effort ctx.info. Progress/log notifications are advisory: a send
+    failure (no client log capability, transport hiccup, disconnect) must never
+    turn an otherwise-successful fetch into an internal_error."""
+    if ctx is None:
+        return
+    try:
+        await ctx.info(message)
+    except Exception as exc:  # noqa: BLE001 - advisory notification, never fatal
+        logger.debug("ctx.info notification dropped: %s", exc)
+
+
+async def _notify_progress(ctx: Context | None, *, progress: float, total: float) -> None:
+    """Best-effort ctx.report_progress; see _notify_info for the rationale."""
+    if ctx is None:
+        return
+    try:
+        await ctx.report_progress(progress=progress, total=total)
+    except Exception as exc:  # noqa: BLE001 - advisory notification, never fatal
+        logger.debug("ctx.report_progress notification dropped: %s", exc)
+
+
 async def _get_stations_data(
     ctx: Context | None, use_cache: bool = True
 ) -> Fetched[StationsResponse]:
@@ -655,8 +704,7 @@ async def _get_stations_data(
     token = _get_api_token()
 
     if use_cache and "stations" in cache:
-        if ctx:
-            await ctx.info("Using cached station data")
+        await _notify_info(ctx, "Using cached station data")
         return Fetched(cache["stations"], "memory", _fetch_times.get("stations"))
 
     dc = _get_disk_cache()
@@ -664,22 +712,19 @@ async def _get_stations_data(
         hit = dc.get_with_age("stations", StationsResponse)
         if hit is not None:
             model, ts = hit
-            if ctx:
-                await ctx.info("Using disk-cached station data")
+            await _notify_info(ctx, "Using disk-cached station data")
             cache["stations"] = model
             _fetch_times["stations"] = ts
             return Fetched(model, "disk", ts)
 
-    if ctx:
-        await ctx.report_progress(progress=0, total=1)
-        await ctx.info("Getting available stations via the Tempest API")
+    await _notify_progress(ctx, progress=0, total=1)
+    await _notify_info(ctx, "Getting available stations via the Tempest API")
     result = await api_get_stations(token)
     cache["stations"] = StationsResponse(**result)
     _fetch_times["stations"] = _now()
     if dc:
         dc.set("stations", cache["stations"])
-    if ctx:
-        await ctx.report_progress(progress=1, total=1)
+    await _notify_progress(ctx, progress=1, total=1)
     return Fetched(cache["stations"], "miss", _fetch_times["stations"])
 
 
@@ -692,8 +737,7 @@ async def _get_station_details_data(
     cache_id = f"station_id_{station_id}"
 
     if use_cache and cache_id in cache:
-        if ctx:
-            await ctx.info(f"Using cached station data for station {station_id}")
+        await _notify_info(ctx, f"Using cached station data for station {station_id}")
         return Fetched(cache[cache_id], "memory", _fetch_times.get(cache_id))
 
     dc = _get_disk_cache()
@@ -701,22 +745,19 @@ async def _get_station_details_data(
         hit = dc.get_with_age(cache_id, StationResponse)
         if hit is not None:
             model, ts = hit
-            if ctx:
-                await ctx.info(f"Using disk-cached station data for station {station_id}")
+            await _notify_info(ctx, f"Using disk-cached station data for station {station_id}")
             cache[cache_id] = model
             _fetch_times[cache_id] = ts
             return Fetched(model, "disk", ts)
 
-    if ctx:
-        await ctx.report_progress(progress=0, total=1)
-        await ctx.info(f"Getting station ID data for station {station_id} via the Tempest API")
+    await _notify_progress(ctx, progress=0, total=1)
+    await _notify_info(ctx, f"Getting station ID data for station {station_id} via the Tempest API")
     result = await api_get_station_id(station_id, token)
     cache[cache_id] = StationResponse(**result)
     _fetch_times[cache_id] = _now()
     if dc:
         dc.set(cache_id, cache[cache_id])
-    if ctx:
-        await ctx.report_progress(progress=1, total=1)
+    await _notify_progress(ctx, progress=1, total=1)
     return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
 
 
@@ -728,18 +769,15 @@ async def _get_forecast_data(
 
     cache_id = f"forecast_{station_id}"
     if use_cache and cache_id in cache:
-        if ctx:
-            await ctx.info(f"Using cached forecast data for station {station_id}")
+        await _notify_info(ctx, f"Using cached forecast data for station {station_id}")
         return Fetched(cache[cache_id], "memory", _fetch_times.get(cache_id))
 
-    if ctx:
-        await ctx.report_progress(progress=0, total=1)
-        await ctx.info(f"Getting forecast for station {station_id} via the Tempest API")
+    await _notify_progress(ctx, progress=0, total=1)
+    await _notify_info(ctx, f"Getting forecast for station {station_id} via the Tempest API")
     result = await api_get_forecast(station_id, token)
     cache[cache_id] = ForecastResponse(**result)
     _fetch_times[cache_id] = _now()
-    if ctx:
-        await ctx.report_progress(progress=1, total=1)
+    await _notify_progress(ctx, progress=1, total=1)
     return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
 
 
@@ -751,18 +789,15 @@ async def _get_observation_data(
 
     cache_id = f"observation_{station_id}"
     if use_cache and cache_id in cache:
-        if ctx:
-            await ctx.info(f"Using cached observation data for station {station_id}")
+        await _notify_info(ctx, f"Using cached observation data for station {station_id}")
         return Fetched(cache[cache_id], "memory", _fetch_times.get(cache_id))
 
-    if ctx:
-        await ctx.report_progress(progress=0, total=1)
-        await ctx.info(f"Getting observations for station {station_id} via the Tempest API")
+    await _notify_progress(ctx, progress=0, total=1)
+    await _notify_info(ctx, f"Getting observations for station {station_id} via the Tempest API")
     result = await api_get_observation(station_id, token)
     cache[cache_id] = ObservationResponse(**result)
     _fetch_times[cache_id] = _now()
-    if ctx:
-        await ctx.report_progress(progress=1, total=1)
+    await _notify_progress(ctx, progress=1, total=1)
     return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
 
 
@@ -887,23 +922,31 @@ async def get_forecast(
         int, Field(description="The ID of the station to get forecast for", gt=0)
     ],
     hours: Annotated[
-        int,
+        int | None,
         Field(
-            default=12,
-            description="Hourly forecasts to return. Capped at 6 in summary mode.",
+            default=None,
+            description=(
+                "Number of hourly forecasts to return. Omit for the default depth "
+                "(6 in summary mode, all available in detailed mode). An explicit "
+                "value is still capped at 6 in summary mode."
+            ),
             ge=1,
             le=48,
         ),
-    ] = 12,
+    ] = None,
     days: Annotated[
-        int,
+        int | None,
         Field(
-            default=5,
-            description="Daily forecasts to return. Capped at 2 in summary mode.",
+            default=None,
+            description=(
+                "Number of daily forecasts to return. Omit for the default depth "
+                "(2 in summary mode, all available in detailed mode). An explicit "
+                "value is still capped at 2 in summary mode."
+            ),
             ge=1,
             le=10,
         ),
-    ] = 5,
+    ] = None,
     detailed: Annotated[
         bool,
         Field(
@@ -924,9 +967,11 @@ async def get_forecast(
     future, this tool covers both in one call.
 
     Workflow: requires station_id from tempest_get_stations. Summary mode (default)
-    caps at 6 hourly / 2 daily; pass detailed=True for full ranges. The
-    response carries `truncated` and `truncation_hint` so clients can
-    detect clipping without parsing this prose.
+    caps at 6 hourly / 2 daily; pass detailed=True for full ranges. A plain
+    call (no hours/days) is not reported as truncated; `truncated` is true only
+    when fewer entries are returned than you explicitly requested. The response
+    carries `truncated` and `truncation_hint` so clients can detect clipping
+    without parsing this prose.
 
     Output: current snapshot + hourly + daily forecasts in the station's
     configured units — read 'units' in the response.
@@ -953,41 +998,60 @@ async def get_forecast(
         fetched = await _get_forecast_data(station_id, ctx)
         result = fetched.data.model_dump(exclude=_FORECAST_EXCLUDE, exclude_none=not detailed)
 
+        all_hourly = result["forecast"]["hourly"]
+        all_daily = result["forecast"]["daily"]
+
         if detailed:
-            result["forecast"]["hourly"] = result["forecast"]["hourly"][:hours]
-            result["forecast"]["daily"] = result["forecast"]["daily"][:days]
+            # Omitting hours/days in detailed mode means "everything available".
+            result["forecast"]["hourly"] = all_hourly if hours is None else all_hourly[:hours]
+            result["forecast"]["daily"] = all_daily if days is None else all_daily[:days]
             summary_capped = False
         else:
-            result["forecast"]["hourly"] = result["forecast"]["hourly"][: min(hours, 6)]
-            result["forecast"]["daily"] = result["forecast"]["daily"][: min(days, 2)]
+            # Summary mode caps at 6/2; an explicit smaller value tightens it.
+            cap_hours = 6 if hours is None else min(hours, 6)
+            cap_days = 2 if days is None else min(days, 2)
+            result["forecast"]["hourly"] = all_hourly[:cap_hours]
+            result["forecast"]["daily"] = all_daily[:cap_days]
             for key in ("latitude", "longitude", "timezone_offset_minutes"):
                 result.pop(key, None)
-            summary_capped = hours > 6 or days > 2
+            # The summary cap only *clips* when the agent explicitly asked for
+            # more than the cap. A plain call (hours/days omitted) is the agent
+            # accepting the default depth, not a truncation.
+            summary_capped = (hours is not None and hours > 6) or (days is not None and days > 2)
 
         returned_hours = len(result["forecast"]["hourly"])
         returned_days = len(result["forecast"]["daily"])
-        # `truncated` reflects the actual shortfall between returned and
-        # requested, regardless of cause. This is honest to the field's
-        # description: an upstream shortfall in detailed mode also flips it
-        # true, even though no summary cap was involved. `truncation_hint`
-        # is reserved for the summary-cap path because that's the only case
-        # with an actionable repair (pass detailed=true).
-        truncated = returned_hours < hours or returned_days < days
 
+        # `truncated` is measured against what the agent EXPLICITLY requested.
+        # An omitted axis (None) can never be truncated — the agent didn't ask
+        # for a specific count. This covers both the summary-cap clip and an
+        # upstream shortfall against an explicit request. `truncation_hint` is
+        # reserved for the summary-cap path, the only case with an actionable
+        # repair (pass detailed=true).
+        truncated = (hours is not None and returned_hours < hours) or (
+            days is not None and returned_days < days
+        )
+
+        # returned_* are always factual; requested_* echo only what the agent
+        # explicitly passed (omitted when None), so they never report a default
+        # the agent didn't choose.
         result["truncated"] = truncated
-        result["requested_hours"] = hours
-        result["requested_days"] = days
         result["returned_hours"] = returned_hours
         result["returned_days"] = returned_days
+        if hours is not None:
+            result["requested_hours"] = hours
+        else:
+            result.pop("requested_hours", None)
+        if days is not None:
+            result["requested_days"] = days
+        else:
+            result.pop("requested_days", None)
+
         if summary_capped:
             result["truncation_hint"] = (
                 "summary mode caps to 6 hourly / 2 daily; pass detailed=true for full ranges"
             )
         else:
-            # Drop the optional hint key when summary caps were not the
-            # cause; an upstream shortfall in detailed mode has no
-            # actionable repair beyond what `requested_*`/`returned_*`
-            # already convey.
             result.pop("truncation_hint", None)
 
         return _validated("forecast", result, fetched)
@@ -1070,12 +1134,6 @@ async def get_observation(
         return _validated("observation", result, fetched)
 
     return await _dispatch(_work)
-
-
-@mcp.custom_route("/health", methods=["GET"])
-async def health_check(request: Request) -> JSONResponse:
-    """Health check endpoint for monitoring."""
-    return JSONResponse({"status": "ok"})
 
 
 if __name__ == "__main__":

@@ -30,7 +30,6 @@ from mcp_server_tempest.server import (
     get_observation,
     get_station_details,
     get_stations,
-    health_check,
     lifespan,
     mcp,
 )
@@ -461,6 +460,18 @@ class TestTools:
         assert "API down" not in payload["message"]
         assert payload["request_id"] in payload["hint"]
 
+    async def test_notification_failure_does_not_fail_tool(self, mock_ctx):
+        """A4: progress/log notifications are advisory. A send failure must not
+        turn a successful fetch into an internal_error."""
+        mock_ctx.report_progress.side_effect = RuntimeError("client disconnected")
+        mock_ctx.info.side_effect = RuntimeError("client disconnected")
+        with patch(
+            "mcp_server_tempest.server.api_get_stations",
+            return_value=SAMPLE_STATION_DATA,
+        ):
+            result = _structured(await get_stations(ctx=mock_ctx))
+            assert len(result["stations"]) == 1
+
     async def test_get_station_details(self, mock_ctx):
         with patch(
             "mcp_server_tempest.server.api_get_station_id",
@@ -520,6 +531,30 @@ class TestTools:
             await get_observation(station_id=12345, ctx=mock_ctx)
         payload = json.loads(excinfo.value.args[0])
         assert payload["code"] == "internal_error"
+
+    async def test_forecast_notification_failure_does_not_fail_tool(self, mock_ctx):
+        """A4: notification failure on the fetch path must not fail get_forecast
+        (covers the post-fetch report_progress call site)."""
+        mock_ctx.report_progress.side_effect = RuntimeError("client disconnected")
+        mock_ctx.info.side_effect = RuntimeError("client disconnected")
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
+            assert result["location_name"] == "Seattle"
+
+    async def test_observation_notification_failure_does_not_fail_tool(self, mock_ctx):
+        """A4: notification failure on the fetch path must not fail
+        get_observation (covers the post-fetch report_progress call site)."""
+        mock_ctx.report_progress.side_effect = RuntimeError("client disconnected")
+        mock_ctx.info.side_effect = RuntimeError("client disconnected")
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = _structured(await get_observation(station_id=12345, ctx=mock_ctx))
+            assert result["station_id"] == 12345
 
 
 # -- Tests for lifespan --
@@ -679,9 +714,15 @@ class TestForecastDepth:
             return_value=SAMPLE_FORECAST_DATA,
         ):
             result = _structured(await get_forecast(station_id=12345, detailed=True, ctx=mock_ctx))
-            # Detailed defaults: 12 hourly, 5 daily
-            assert len(result["forecast"]["hourly"]) == 12
-            assert len(result["forecast"]["daily"]) == 5
+            # Detailed + omitted hours/days means "everything available".
+            # SAMPLE supplies 48 hourly / 10 daily.
+            assert len(result["forecast"]["hourly"]) == 48
+            assert len(result["forecast"]["daily"]) == 10
+            # Nothing was explicitly requested, so it is not truncated and
+            # requested_* are omitted.
+            assert result["truncated"] is False
+            assert "requested_hours" not in result
+            assert "requested_days" not in result
 
     async def test_depth_exceeds_available(self, mock_ctx):
         with patch(
@@ -846,20 +887,22 @@ class TestForecastTruncationFields:
             assert result["returned_days"] == 7
             assert "truncation_hint" not in result
 
-    async def test_summary_default_truncates_hours_and_days(self, mock_ctx):
-        """Default summary call (hours=12, days=5) is truncated on both axes."""
+    async def test_plain_summary_call_not_truncated(self, mock_ctx):
+        """F2: a plain summary call (no hours/days) returns the default depth
+        without being flagged truncated, and omits requested_* since the agent
+        asked for no specific count.
+        """
         with patch(
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
             result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
-            assert result["truncated"] is True
-            assert result["requested_hours"] == 12
-            assert result["requested_days"] == 5
             assert result["returned_hours"] == 6
             assert result["returned_days"] == 2
-            assert "summary mode caps" in result["truncation_hint"]
-            assert "detailed=true" in result["truncation_hint"]
+            assert result["truncated"] is False
+            assert "requested_hours" not in result
+            assert "requested_days" not in result
+            assert "truncation_hint" not in result
 
     async def test_detailed_mode_upstream_shortfall(self, mock_ctx):
         """If upstream returns fewer entries than requested, truncated=True
@@ -888,9 +931,10 @@ class TestForecastTruncationFields:
             assert result["returned_days"] == 3
             assert "truncation_hint" not in result
 
-    async def test_truncation_fields_present_in_all_modes(self, mock_ctx):
-        """truncated/requested_*/returned_* must always be present so agents
-        get a consistent shape regardless of mode."""
+    async def test_factual_fields_always_present(self, mock_ctx):
+        """truncated/returned_* are always present so agents get a consistent
+        shape regardless of mode. requested_* appear only when the agent passed
+        an explicit value (see test_requested_fields_only_when_explicit)."""
         with patch(
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
@@ -902,14 +946,25 @@ class TestForecastTruncationFields:
                 {"hours": 1, "days": 1, "detailed": False},
             ):
                 result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx, **kwargs))
-                for key in (
-                    "truncated",
-                    "requested_hours",
-                    "requested_days",
-                    "returned_hours",
-                    "returned_days",
-                ):
+                for key in ("truncated", "returned_hours", "returned_days"):
                     assert key in result, f"{key} missing for kwargs={kwargs}"
+
+    async def test_requested_fields_only_when_explicit(self, mock_ctx):
+        """requested_* echo only what the agent explicitly passed; they are
+        omitted on an axis the agent did not constrain."""
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            # Only hours given: requested_hours present, requested_days omitted.
+            result = _structured(await get_forecast(station_id=12345, hours=3, ctx=mock_ctx))
+            assert result["requested_hours"] == 3
+            assert "requested_days" not in result
+
+            # Neither given: both omitted.
+            result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
+            assert "requested_hours" not in result
+            assert "requested_days" not in result
 
 
 # -- Tests for _relaxed_schema --
@@ -1158,17 +1213,6 @@ async def test_observation_summary_drops_null_optionals():
     assert "lightning_strike_last_epoch" not in s_obs  # the null optional was dropped
     assert "lightning_strike_last_epoch" in d_obs  # detailed keeps it (as None)
     assert set(d_obs.keys()) >= set(s_obs.keys())
-
-
-# -- Tests for health check --
-
-
-class TestHealthCheck:
-    async def test_health_check(self):
-        request = AsyncMock()
-        response = await health_check(request)
-        assert response.status_code == 200
-        assert response.body == b'{"status":"ok"}'
 
 
 # -- Tests for server instructions --
