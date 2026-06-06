@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-06-06
+
+Agent-friendliness hardening from a contract audit (no Critical/Major findings;
+these address the Minor/Nit items and one latent resource bug).
+
+### Breaking
+
+- `tempest_get_forecast`: `hours` and `days` now default to `None` instead of
+  `12`/`5`. Omitting them yields the default depth (6 hourly / 2 daily in
+  summary mode; all available entries in detailed mode). A plain call is no
+  longer reported as `truncated`. `truncated` is now true only when fewer
+  entries are returned than you **explicitly** requested; `requested_hours` /
+  `requested_days` are emitted only when you pass them; `returned_hours` /
+  `returned_days` are always present. `truncation_hint` appears only when a
+  summary cap clipped an explicit request.
+
+### Fixed
+
+- Upstream WeatherFlow calls now run with an explicit 15s total timeout and a
+  session the server owns and closes, fixing an aiohttp `ClientSession` leak on
+  every uncached call (weatherflow4py never closed its own session). Timeouts
+  and transport failures map to the retryable `upstream_unavailable` error.
+- Progress and log notifications (`ctx.report_progress` / `ctx.info`) are now
+  best-effort: a notification send failure can no longer turn a successful
+  fetch into an `internal_error`.
+
+### Added
+
+- `error_channel` and `latency` fields in `tempest://capabilities`, documenting
+  the JSON error envelope (branch on `code`, not `message`) and the per-call
+  timeout behavior.
+
+### Changed
+
+- The capability fingerprint now covers the full `tempest://capabilities`
+  contract (scope, tool purposes, error channel, latency), so a change to that
+  prose moves the fingerprint a cached client can diff against.
+
+### Removed
+
+- Unreachable `/health` HTTP route (the server runs over stdio only).
+
 ## [0.7.0] - 2026-05-20
 
 ### Breaking

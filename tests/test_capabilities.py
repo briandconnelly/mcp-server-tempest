@@ -37,6 +37,22 @@ async def test_capabilities_resource_shape():
     assert "station_not_found" in payload["error_codes"]
     assert "RFC3339" in payload["timestamps"]
     assert "fingerprint_covers" in payload
+    # F5: the error envelope is documented so agents know to branch on `code`.
+    assert "code" in payload["error_channel"]
+    assert "isError" in payload["error_channel"]
+    # F1: latency / timeout behavior is declared.
+    assert "timeout" in payload["latency"].lower()
+
+
+def test_capability_contract_is_fingerprinted():
+    """A1: changing the capability-summary prose must move the fingerprint, so
+    a cached client can detect the change without re-walking the surface."""
+    from mcp_server_tempest import server as s
+
+    baseline = s._compute_fingerprint()
+    mutated = {**s._CAPABILITY_CONTRACT, "scope": "something different"}
+    with patch.object(s, "_CAPABILITY_CONTRACT", mutated):
+        assert s._compute_fingerprint() != baseline
 
 
 def test_fingerprint_is_deterministic_across_reload():

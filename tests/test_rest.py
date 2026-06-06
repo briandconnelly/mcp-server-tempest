@@ -347,6 +347,51 @@ class TestApiGetForecastErrorMapping:
             assert excinfo.value.next == {"tool": "tempest_get_stations"}
 
 
+class TestSessionLifecycle:
+    """F1: we own the aiohttp session — it is timeout-bound and always closed.
+
+    weatherflow4py's __aexit__ is a no-op that never closes its own session,
+    so `async with WeatherFlowRestAPI(token)` leaked a session per call. These
+    lock in that rest.py constructs the session, passes it through, and closes
+    it deterministically.
+    """
+
+    async def test_session_is_closed_and_passed_to_api(self):
+        mock_api, mock_result = _mock_api_context({"stations": []})
+        mock_api.async_get_stations = AsyncMock(return_value=mock_result)
+
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("mcp_server_tempest.rest.aiohttp.ClientSession", return_value=mock_session),
+            patch("mcp_server_tempest.rest.WeatherFlowRestAPI", return_value=mock_api) as mock_ctor,
+        ):
+            await api_get_stations("fake-token")
+
+        # The session we created is handed to the library...
+        _, kwargs = mock_ctor.call_args
+        assert kwargs.get("session") is mock_session
+        # ...and closed via `async with` (no leak).
+        mock_session.__aexit__.assert_awaited_once()
+
+    async def test_timeout_maps_to_upstream_unavailable(self):
+        # The total-timeout path raises asyncio.TimeoutError (== builtins
+        # TimeoutError on 3.11+), which is NOT an aiohttp.ClientError.
+        async def boom(self):
+            raise TimeoutError("too slow")
+
+        with patch(
+            "weatherflow4py.api.WeatherFlowRestAPI.async_get_stations",
+            new=boom,
+        ):
+            with pytest.raises(WeatherFlowError) as excinfo:
+                await api_get_stations("fake-token")
+            assert excinfo.value.code is ErrorCode.UPSTREAM_UNAVAILABLE
+            assert excinfo.value.temporary is True
+
+
 class TestApiGetObservationErrorMapping:
     async def test_429_carries_retry_after(self):
         async def boom(self, station_id):

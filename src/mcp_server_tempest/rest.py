@@ -1,13 +1,43 @@
 import json
 import math
-from collections.abc import Mapping
-from typing import Literal
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
+from typing import Any, Literal
 
 import aiohttp
 from marshmallow.exceptions import MarshmallowError
 from weatherflow4py.api import WeatherFlowRestAPI
 
 from .errors import ErrorCode, WeatherFlowError
+
+# Total per-request budget for an upstream WeatherFlow call. weatherflow4py
+# creates its own aiohttp session with NO timeout (aiohttp would otherwise
+# default to ~5 min) and — worse — its `__aexit__` is a no-op that never closes
+# that session, so `async with WeatherFlowRestAPI(token)` leaks a session on
+# every call. We therefore own the session here: bound it with an explicit
+# timeout and close it deterministically. Surfaced to agents via
+# capabilities()["latency"]; a breach maps to upstream_unavailable
+# (temporary: true), so the repair is "retry with backoff".
+_REQUEST_TIMEOUT_SECONDS = 15
+_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT_SECONDS)
+
+
+@asynccontextmanager
+async def _api_session(token: str) -> AsyncIterator[Any]:
+    """Yield a WeatherFlowRestAPI bound to a timeout-scoped session we own.
+
+    The session is created and closed here (weatherflow4py won't close a
+    caller-provided session), so no aiohttp session leaks across calls.
+
+    Yields `Any` rather than `WeatherFlowRestAPI`: weatherflow4py's response
+    models are not fully typed (their runtime `.to_dict()` / indexing is absent
+    from the declared types), so a precise handle type makes `ty` reject the
+    `.to_dict()` calls below for methods that genuinely exist at runtime.
+    """
+    async with aiohttp.ClientSession(timeout=_REQUEST_TIMEOUT) as session:
+        async with WeatherFlowRestAPI(token, session=session) as api:
+            yield api
+
 
 # Parse-failure exception types from `weatherflow4py.api._make_request()`'s
 # `response_model.from_json(data)` step. We catch a narrow set so genuine
@@ -129,16 +159,18 @@ def _translate_response_error(
 
 async def api_get_stations(token: str) -> dict:
     try:
-        async with WeatherFlowRestAPI(token) as api:
+        async with _api_session(token) as api:
             stations = await api.async_get_stations()
             return stations.to_dict()
     except aiohttp.ClientResponseError as e:
         raise _translate_response_error(e, operation="stations") from e
-    except aiohttp.ClientError as e:
-        # transport / DNS / timeout
+    except (TimeoutError, aiohttp.ClientError) as e:
+        # transport / DNS / connection error, or our _REQUEST_TIMEOUT firing
+        # (the total-timeout path raises asyncio.TimeoutError, which is
+        # builtins.TimeoutError on 3.11+ and is NOT an aiohttp.ClientError).
         raise WeatherFlowError(
             code=ErrorCode.UPSTREAM_UNAVAILABLE,
-            message="Could not reach WeatherFlow API.",
+            message="Could not reach WeatherFlow API in time.",
             hint="Check network connectivity; retry.",
             details={"operation": "stations"},
         ) from e
@@ -158,7 +190,7 @@ async def api_get_stations(token: str) -> dict:
 
 async def api_get_station_id(station_id: int, token: str) -> dict:
     try:
-        async with WeatherFlowRestAPI(token) as api:
+        async with _api_session(token) as api:
             station = await api.async_get_station(station_id=station_id)
             if not station:
                 raise WeatherFlowError(
@@ -174,10 +206,10 @@ async def api_get_station_id(station_id: int, token: str) -> dict:
             return station[0].to_dict()
     except aiohttp.ClientResponseError as e:
         raise _translate_response_error(e, operation="station", station_id=station_id) from e
-    except aiohttp.ClientError as e:
+    except (TimeoutError, aiohttp.ClientError) as e:
         raise WeatherFlowError(
             code=ErrorCode.UPSTREAM_UNAVAILABLE,
-            message="Could not reach WeatherFlow API.",
+            message="Could not reach WeatherFlow API in time.",
             hint="Check network connectivity; retry.",
             details={"operation": "station"},
         ) from e
@@ -194,15 +226,15 @@ async def api_get_station_id(station_id: int, token: str) -> dict:
 
 async def api_get_forecast(station_id: int, token: str) -> dict:
     try:
-        async with WeatherFlowRestAPI(token) as api:
+        async with _api_session(token) as api:
             forecast = await api.async_get_forecast(station_id=station_id)
             return forecast.to_dict()
     except aiohttp.ClientResponseError as e:
         raise _translate_response_error(e, operation="forecast", station_id=station_id) from e
-    except aiohttp.ClientError as e:
+    except (TimeoutError, aiohttp.ClientError) as e:
         raise WeatherFlowError(
             code=ErrorCode.UPSTREAM_UNAVAILABLE,
-            message="Could not reach WeatherFlow API.",
+            message="Could not reach WeatherFlow API in time.",
             hint="Check network connectivity; retry.",
             details={"operation": "forecast"},
         ) from e
@@ -219,15 +251,15 @@ async def api_get_forecast(station_id: int, token: str) -> dict:
 
 async def api_get_observation(station_id: int, token: str) -> dict:
     try:
-        async with WeatherFlowRestAPI(token) as api:
+        async with _api_session(token) as api:
             observation = await api.async_get_observation(station_id=station_id)
             return observation.to_dict()
     except aiohttp.ClientResponseError as e:
         raise _translate_response_error(e, operation="observation", station_id=station_id) from e
-    except aiohttp.ClientError as e:
+    except (TimeoutError, aiohttp.ClientError) as e:
         raise WeatherFlowError(
             code=ErrorCode.UPSTREAM_UNAVAILABLE,
-            message="Could not reach WeatherFlow API.",
+            message="Could not reach WeatherFlow API in time.",
             hint="Check network connectivity; retry.",
             details={"operation": "observation"},
         ) from e
