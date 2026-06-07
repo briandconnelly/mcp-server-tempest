@@ -49,7 +49,9 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
-      - run: uv sync --group dev
+      # Runtime deps only: gen_manifest imports the package, but no dev tooling
+      # (ruff/pytest/ty) is needed to verify distributions.
+      - run: uv sync --no-dev
       - name: Manifest is in sync with pyproject
         run: uv run python scripts/gen_manifest.py --check
       - name: Build sdist and wheel
