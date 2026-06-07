@@ -21,6 +21,8 @@ permissions: {}
 jobs:
   verify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
@@ -59,6 +61,8 @@ jobs:
   build:
     needs: verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
@@ -83,6 +87,11 @@ jobs:
           path: dist/
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Make reruns safe: if this version was already uploaded (e.g. a later
+          # job failed and the pipeline is rerun), treat it as a no-op instead
+          # of failing on PyPI's duplicate-file error.
+          skip-existing: true
 
   create-release:
     needs: publish-pypi
