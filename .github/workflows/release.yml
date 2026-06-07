@@ -1,0 +1,143 @@
+name: Release
+
+# Cut a release from a pushed v* tag:
+#   verify -> build -> publish to PyPI (OIDC) -> create GitHub Release -> attach .mcpb
+# A release is reduced to: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+#
+# NOTE: a GitHub Release created with GITHUB_TOKEN does NOT trigger other
+# workflows, so the .mcpb bundle is built by calling mcpb.yml explicitly
+# (the `bundle` job) rather than relying on its old `release: published` trigger.
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --group dev
+
+      - name: Tag matches pyproject and CHANGELOG versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          uv run python - "$tag" <<'PY'
+          import re, sys, tomllib
+          from pathlib import Path
+
+          tag = sys.argv[1]
+          pyproject = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+
+          # Latest released section: first `## [X.Y.Z]` heading, skipping [Unreleased].
+          m = re.search(
+              r"^## \[(\d+\.\d+\.\d+[^\]]*)\]", Path("CHANGELOG.md").read_text(), re.M
+          )
+          changelog = m.group(1) if m else None
+
+          errors = []
+          if tag != pyproject:
+              errors.append(f"git tag {tag!r} != pyproject version {pyproject!r}")
+          if tag != changelog:
+              errors.append(f"git tag {tag!r} != latest CHANGELOG version {changelog!r}")
+          if errors:
+              print("\n".join(errors))
+              sys.exit(1)
+          print(f"OK: tag, pyproject, and CHANGELOG all agree on {tag}")
+          PY
+
+      - name: Manifest is in sync with pyproject
+        run: uv run python scripts/gen_manifest.py --check
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - name: Build sdist and wheel
+        run: uv build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # OIDC trusted publishing; no API token needed
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  create-release:
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload assets
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+      - name: Extract CHANGELOG section for this version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python3 - "$version" <<'PY' > release-notes.md
+          import re, sys
+          from pathlib import Path
+
+          version = sys.argv[1]
+          text = Path("CHANGELOG.md").read_text()
+          # Capture everything between this version's heading and the next `## ` heading.
+          pat = re.compile(
+              rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## |\Z)",
+              re.M | re.S,
+          )
+          m = pat.search(text)
+          if not m:
+              sys.exit(f"No CHANGELOG section found for {version}")
+          body = m.group(1).strip()
+          if not body:
+              sys.exit(f"CHANGELOG section for {version} is empty")
+          print(body)
+          PY
+
+      - name: Create GitHub Release (idempotent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; uploading assets only."
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" \
+              --title "mcp-server-tempest $tag" \
+              --notes-file release-notes.md \
+              dist/*
+          fi
+
+  bundle:
+    needs: create-release
+    permissions:
+      contents: write # mcpb.yml uploads the .mcpb asset to the release
+    uses: ./.github/workflows/mcpb.yml
+    with:
+      tag: ${{ github.ref_name }}

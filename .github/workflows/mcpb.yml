@@ -1,9 +1,18 @@
 name: Build MCPB bundle
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to attach the bundle to (e.g. v0.8.0)"
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re)build and attach the bundle to"
+        required: true
+        type: string
 
 permissions:
   contents: write # upload the .mcpb asset to the release
@@ -13,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }} # build the bundle from the tagged commit
       - uses: astral-sh/setup-uv@v7
       - uses: actions/setup-node@v6
         with:
@@ -51,10 +62,9 @@ jobs:
           fi
 
       - name: Upload bundle to release
-        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" "$BUNDLE" --clobber
+        run: gh release upload "${{ inputs.tag }}" "$BUNDLE" --clobber
 
       - name: Upload bundle as workflow artifact
         uses: actions/upload-artifact@v7
