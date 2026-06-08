@@ -1,6 +1,7 @@
-# Normalize line endings to LF in the repository across agent/contributor
-# platforms; check out with the platform's native convention. Keeps diffs
-# free of CRLF churn. Binary files are auto-detected and left untouched.
+# Normalize line endings to LF across agent/contributor platforms: text
+# files are stored and checked out as LF everywhere. `eol=lf` overrides each
+# platform's native convention and `core.autocrlf`, keeping the working tree
+# and diffs free of CRLF churn. Binary files are auto-detected and untouched.
 * text=auto eol=lf
 
 # uv.lock is intentionally NOT marked linguist-generated: its diffs are part
