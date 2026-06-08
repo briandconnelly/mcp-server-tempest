@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Python dependencies (uv-managed; updates pyproject.toml + uv.lock)
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      python-dev:
+        dependency-type: "development"
+
+  # GitHub Actions (keeps the SHA pins current)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      actions:
+        patterns:
+          - "*"
