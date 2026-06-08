@@ -81,7 +81,8 @@ WeatherFlow Tempest weather-station data. It is a Python package
 ## Security
 
 Report vulnerabilities via the repository's private vulnerability
-reporting (GitHub Security tab) rather than a public issue.
+reporting (GitHub Security tab) rather than a public issue; see
+[`SECURITY.md`](SECURITY.md) for the policy and scope.
 
 ## Identity & enforcement note
 

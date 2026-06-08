@@ -1,0 +1,7 @@
+# Normalize line endings to LF in the repository across agent/contributor
+# platforms; check out with the platform's native convention. Keeps diffs
+# free of CRLF churn. Binary files are auto-detected and left untouched.
+* text=auto eol=lf
+
+# uv.lock is intentionally NOT marked linguist-generated: its diffs are part
+# of dependency review and must stay visible in pull requests.

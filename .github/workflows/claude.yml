@@ -12,6 +12,11 @@ on:
 
 jobs:
   claude:
+    # Access control is NOT this `@claude` string match — it is enforced by
+    # claude-code-action, which only runs for actors with write access to the
+    # repo and rejects bot-triggered runs by default. Do NOT set
+    # `allowed_non_write_users` or `allowed_bots`, and keep the action pinned
+    # at or above v1.0.94 (the fix for the `[bot]`-suffix trigger bypass).
     if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
@@ -32,7 +37,7 @@ jobs:
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@fbda2eb1bdc90d319b8d853f5deb53bca199a7c1 # v1
+        uses: anthropics/claude-code-action@fbda2eb1bdc90d319b8d853f5deb53bca199a7c1 # v1.0.140
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
