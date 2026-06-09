@@ -32,6 +32,7 @@ async def test_capabilities_resource_shape():
         "tempest_get_station_details",
         "tempest_get_observation",
         "tempest_get_forecast",
+        "tempest_get_capabilities",
     }
     assert "invalid_argument" in payload["error_codes"]
     assert "station_not_found" in payload["error_codes"]

@@ -55,6 +55,7 @@ async def test_tools_use_tempest_prefix():
         "tempest_get_station_details",
         "tempest_get_observation",
         "tempest_get_forecast",
+        "tempest_get_capabilities",
     }
 
 

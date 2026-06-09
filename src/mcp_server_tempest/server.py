@@ -154,7 +154,10 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-cache = TTLCache(
+# Values are the four response models; typed Any because each entry site
+# narrows to its concrete model and a BaseModel bound would force casts at
+# every read.
+cache: TTLCache[str, Any] = TTLCache(
     maxsize=_int_env("WEATHERFLOW_CACHE_SIZE", 100),
     ttl=_int_env("WEATHERFLOW_CACHE_TTL", 300),
 )
@@ -162,7 +165,7 @@ cache = TTLCache(
 # Epoch seconds of the last upstream fetch per cache key. A bounded TTLCache
 # (same shape as the data cache) so it cannot leak relative to it; if an entry
 # expires before its data, ts_retrieved is simply omitted on that hit.
-_fetch_times: TTLCache = TTLCache(
+_fetch_times: TTLCache[str, float] = TTLCache(
     maxsize=_int_env("WEATHERFLOW_CACHE_SIZE", 100),
     ttl=_int_env("WEATHERFLOW_CACHE_TTL", 300),
 )
@@ -251,6 +254,7 @@ TOOL SELECTION:
 - "Deeper config / hardware for one station" -> tempest_get_station_details(station_id)
 - "Current conditions / right now"           -> tempest_get_observation(station_id)
 - "Forecast / later / tomorrow / this week"  -> tempest_get_forecast(station_id)
+- "What can this server do"                  -> tempest_get_capabilities
 
 NOTES:
 - Units follow each station's config — read 'station_units' / 'units' fields.
@@ -259,10 +263,12 @@ NOTES:
   tempest_get_station_details for the deeper per-station record.
 - tempest_get_forecast also returns a current snapshot, but tempest_get_observation is
   lighter for current-only questions.
-- tempest_get_forecast in summary mode (default) caps at 6 hourly / 2 daily; pass
-  detailed=True for full ranges. The response carries `truncated`,
-  `requested_*`, `returned_*`, and `truncation_hint` so clients can
-  detect clipping structurally.
+- tempest_get_forecast returns 6 hourly / 2 daily when hours/days are omitted;
+  explicit hours/days are honored as given in both modes. detailed=True
+  returns full field density and, when hours/days are omitted, all
+  available entries. The response carries `truncated`, `requested_*`,
+  `returned_*`, and `truncation_hint` so clients can detect an upstream
+  shortfall structurally.
 
 AMBIENT STATE (affects freshness and cache repair):
 - WEATHERFLOW_CACHE_TTL (default 300s) and WEATHERFLOW_CACHE_SIZE
@@ -283,10 +289,11 @@ TYPICAL WORKFLOW:
 SETUP (required):
 - WEATHERFLOW_API_TOKEN — get one at https://tempestwx.com/settings/tokens.
 
-SERVER SURFACE: mcp-server-tempest@{version}. Read tempest://capabilities for
-the structured surface summary (scope, tools, error codes, fingerprint). Each
-tool result also carries _meta.fingerprint; it changes on any tool/schema/
-error-code/instructions change.
+SERVER SURFACE: mcp-server-tempest@{version}. Read tempest://capabilities (or
+call tempest_get_capabilities if your client does not expose MCP resources)
+for the structured surface summary (scope, tools, error codes, fingerprint).
+Each tool result also carries the fingerprint in _meta; it changes on any
+tool/schema/error-code/instructions change.
 
 TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
 `uvx`) speaks MCP over stdio.
@@ -451,6 +458,47 @@ _OBSERVATION_SCHEMA = _relaxed_schema(
 )
 
 
+# Output schema for tempest_get_capabilities. Deliberately permissive
+# (additionalProperties: true): the capability summary grows additively, and
+# new informational fields must not be a breaking change for clients that
+# validate against this schema. Only the keys agents branch on are required.
+_CAPABILITIES_OUTPUT_SCHEMA: dict = {
+    "$schema": JSON_SCHEMA_DIALECT,
+    "type": "object",
+    "additionalProperties": True,
+    "required": [
+        "name",
+        "scope",
+        "not_in_scope",
+        "tools",
+        "error_codes",
+        "version",
+        "fingerprint",
+    ],
+    "properties": {
+        "name": {"type": "string"},
+        "transport": {"type": "string"},
+        "scope": {"type": "string"},
+        "not_in_scope": {"type": "array", "items": {"type": "string"}},
+        "tools": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": True,
+                "required": ["name", "purpose"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "purpose": {"type": "string"},
+                },
+            },
+        },
+        "error_codes": {"type": "array", "items": {"type": "string"}},
+        "version": {"type": "string"},
+        "fingerprint": {"type": "string"},
+    },
+}
+
+
 # Static, agent-visible capability contract. Folded into the fingerprint (see
 # _compute_fingerprint) so any change to this prose — scope, negative scope,
 # tool purposes, the error envelope — moves the fingerprint, and served
@@ -486,6 +534,13 @@ _CAPABILITY_CONTRACT: dict = {
         {
             "name": "tempest_get_forecast",
             "purpose": "Hourly + daily forecast plus a current snapshot.",
+        },
+        {
+            "name": "tempest_get_capabilities",
+            "purpose": (
+                "Structured surface summary; mirrors the tempest://capabilities "
+                "resource for clients without resource support."
+            ),
         },
     ],
     "error_channel": (
@@ -538,6 +593,7 @@ def _compute_fingerprint() -> str:
                     "tempest_get_station_details",
                     "tempest_get_observation",
                     "tempest_get_forecast",
+                    "tempest_get_capabilities",
                 ]
             ),
             "output_schemas": {
@@ -545,6 +601,7 @@ def _compute_fingerprint() -> str:
                 "station": _STATION_SCHEMA,
                 "forecast": _FORECAST_SCHEMA,
                 "observation": _OBSERVATION_SCHEMA,
+                "capabilities": _CAPABILITIES_OUTPUT_SCHEMA,
             },
             "error_codes": sorted(c.value for c in ErrorCode),
             "instructions": _INSTRUCTIONS,
@@ -569,10 +626,11 @@ _OUTPUT_VALIDATORS: dict[str, Any] = {
     "station": Draft202012Validator(_STATION_SCHEMA),
     "forecast": Draft202012Validator(_FORECAST_SCHEMA),
     "observation": Draft202012Validator(_OBSERVATION_SCHEMA),
+    "capabilities": Draft202012Validator(_CAPABILITIES_OUTPUT_SCHEMA),
 }
 
 
-def _validated(schema_key: str, result: dict, fetched: Fetched) -> ToolResult:
+def _validated(schema_key: str, result: dict, meta: dict) -> ToolResult:
     validator = _OUTPUT_VALIDATORS[schema_key]
     if not validator.is_valid(result):
         # str() each path element: paths mix str keys and int indices, and
@@ -589,7 +647,7 @@ def _validated(schema_key: str, result: dict, fetched: Fetched) -> ToolResult:
             "https://github.com/briandconnelly/mcp-server-tempest/issues",
             details={"validation_error": errs[0].message},
         )
-    return ToolResult(structured_content=result, meta=_meta_for(fetched))
+    return ToolResult(structured_content=result, meta=meta)
 
 
 def _build_capabilities() -> dict:
@@ -847,7 +905,7 @@ async def get_stations(
     async def _work() -> ToolResult:
         fetched = await _get_stations_data(ctx)
         result = fetched.data.model_dump(exclude=_STATIONS_EXCLUDE)
-        return _validated("stations", result, fetched)
+        return _validated("stations", result, _meta_for(fetched))
 
     return await _dispatch(_work)
 
@@ -901,7 +959,7 @@ async def get_station_details(
     async def _work() -> ToolResult:
         fetched = await _get_station_details_data(station_id, ctx)
         result = fetched.data.model_dump(exclude=_STATION_EXCLUDE)
-        return _validated("station", result, fetched)
+        return _validated("station", result, _meta_for(fetched))
 
     return await _dispatch(_work)
 
@@ -927,8 +985,8 @@ async def get_forecast(
             default=None,
             description=(
                 "Number of hourly forecasts to return. Omit for the default depth "
-                "(6 in summary mode, all available in detailed mode). An explicit "
-                "value is still capped at 6 in summary mode."
+                "(6 in summary mode, all available in detailed mode). Explicit "
+                "values are honored as given in both modes."
             ),
             ge=1,
             le=48,
@@ -940,8 +998,8 @@ async def get_forecast(
             default=None,
             description=(
                 "Number of daily forecasts to return. Omit for the default depth "
-                "(2 in summary mode, all available in detailed mode). An explicit "
-                "value is still capped at 2 in summary mode."
+                "(2 in summary mode, all available in detailed mode). Explicit "
+                "values are honored as given in both modes."
             ),
             ge=1,
             le=10,
@@ -951,7 +1009,11 @@ async def get_forecast(
         bool,
         Field(
             default=False,
-            description="If true, return full response. Default is a condensed summary.",
+            description=(
+                "If true, return full field density (including null fields and "
+                "station coordinates). Default is a condensed summary. Controls "
+                "density only; entry counts follow hours/days."
+            ),
         ),
     ] = False,
     ctx: Context | None = None,
@@ -966,12 +1028,12 @@ async def get_forecast(
     this returns a much larger response. If you need both current AND
     future, this tool covers both in one call.
 
-    Workflow: requires station_id from tempest_get_stations. Summary mode (default)
-    caps at 6 hourly / 2 daily; pass detailed=True for full ranges. A plain
-    call (no hours/days) is not reported as truncated; `truncated` is true only
-    when fewer entries are returned than you explicitly requested. The response
-    carries `truncated` and `truncation_hint` so clients can detect clipping
-    without parsing this prose.
+    Workflow: requires station_id from tempest_get_stations. When hours/days are
+    omitted, summary mode returns 6 hourly / 2 daily and detailed mode returns
+    all available entries; explicit hours/days are honored as given in both
+    modes. `truncated` is true only when upstream supplied fewer entries than
+    you explicitly requested; `truncation_hint` then states the shortfall.
+    A plain call (no hours/days) is never reported as truncated.
 
     Output: current snapshot + hourly + daily forecasts in the station's
     configured units — read 'units' in the response.
@@ -1001,33 +1063,29 @@ async def get_forecast(
         all_hourly = result["forecast"]["hourly"]
         all_daily = result["forecast"]["daily"]
 
-        if detailed:
-            # Omitting hours/days in detailed mode means "everything available".
-            result["forecast"]["hourly"] = all_hourly if hours is None else all_hourly[:hours]
-            result["forecast"]["daily"] = all_daily if days is None else all_daily[:days]
-            summary_capped = False
+        # Entry counts: explicit hours/days are honored as given in both
+        # modes. Omitted values mean the mode default — 6/2 in summary mode,
+        # everything available in detailed mode. `detailed` controls field
+        # density only (exclude_none above, metadata pops below).
+        if hours is None:
+            result["forecast"]["hourly"] = all_hourly if detailed else all_hourly[:6]
         else:
-            # Summary mode caps at 6/2; an explicit smaller value tightens it.
-            cap_hours = 6 if hours is None else min(hours, 6)
-            cap_days = 2 if days is None else min(days, 2)
-            result["forecast"]["hourly"] = all_hourly[:cap_hours]
-            result["forecast"]["daily"] = all_daily[:cap_days]
+            result["forecast"]["hourly"] = all_hourly[:hours]
+        if days is None:
+            result["forecast"]["daily"] = all_daily if detailed else all_daily[:2]
+        else:
+            result["forecast"]["daily"] = all_daily[:days]
+        if not detailed:
             for key in ("latitude", "longitude", "timezone_offset_minutes"):
                 result.pop(key, None)
-            # The summary cap only *clips* when the agent explicitly asked for
-            # more than the cap. A plain call (hours/days omitted) is the agent
-            # accepting the default depth, not a truncation.
-            summary_capped = (hours is not None and hours > 6) or (days is not None and days > 2)
 
         returned_hours = len(result["forecast"]["hourly"])
         returned_days = len(result["forecast"]["daily"])
 
         # `truncated` is measured against what the agent EXPLICITLY requested.
         # An omitted axis (None) can never be truncated — the agent didn't ask
-        # for a specific count. This covers both the summary-cap clip and an
-        # upstream shortfall against an explicit request. `truncation_hint` is
-        # reserved for the summary-cap path, the only case with an actionable
-        # repair (pass detailed=true).
+        # for a specific count. The only remaining cause is an upstream
+        # shortfall: WeatherFlow supplied fewer entries than requested.
         truncated = (hours is not None and returned_hours < hours) or (
             days is not None and returned_days < days
         )
@@ -1047,14 +1105,25 @@ async def get_forecast(
         else:
             result.pop("requested_days", None)
 
-        if summary_capped:
-            result["truncation_hint"] = (
-                "summary mode caps to 6 hourly / 2 daily; pass detailed=true for full ranges"
-            )
+        # Factual shortfall note, not a repair — the data does not exist
+        # upstream, so there is no parameter change that recovers it.
+        if truncated:
+            shortfalls = []
+            if hours is not None and returned_hours < hours:
+                shortfalls.append(
+                    f"upstream returned only {returned_hours} hourly entries "
+                    f"for requested_hours={hours}"
+                )
+            if days is not None and returned_days < days:
+                shortfalls.append(
+                    f"upstream returned only {returned_days} daily entries "
+                    f"for requested_days={days}"
+                )
+            result["truncation_hint"] = "; ".join(shortfalls)
         else:
             result.pop("truncation_hint", None)
 
-        return _validated("forecast", result, fetched)
+        return _validated("forecast", result, _meta_for(fetched))
 
     return await _dispatch(_work)
 
@@ -1131,7 +1200,52 @@ async def get_observation(
             for key in ("latitude", "longitude", "elevation", "is_public"):
                 result.pop(key, None)
 
-        return _validated("observation", result, fetched)
+        return _validated("observation", result, _meta_for(fetched))
+
+    return await _dispatch(_work)
+
+
+@mcp.tool(
+    name="tempest_get_capabilities",
+    tags={"discovery"},
+    annotations={
+        "title": "Get Server Capabilities",
+        "readOnlyHint": True,
+        "openWorldHint": True,
+        "idempotentHint": True,
+    },
+    output_schema=_CAPABILITIES_OUTPUT_SCHEMA,
+)
+async def get_capabilities() -> ToolResult:
+    """Describe this server: scope, negative scope, tools, error codes,
+    caching/latency behavior, and the capability fingerprint.
+
+    Use when: you need the structured surface summary and your client does
+    not expose MCP resources — this mirrors the tempest://capabilities
+    resource exactly. Also useful to detect surface changes cheaply: compare
+    `fingerprint` against a cached value instead of re-reading every tool.
+
+    Don't use for: weather or station data (-> tempest_get_stations,
+    tempest_get_observation, tempest_get_forecast).
+
+    Output: static capability summary. Requires no API token and makes no
+    upstream call.
+
+    Errors:
+    - internal_error — server bug; report at
+      https://github.com/briandconnelly/mcp-server-tempest/issues
+
+    Scope: describes this server only — read-only access to the user's own
+    WeatherFlow Tempest station(s), not a global or arbitrary-location
+    weather service.
+    """
+
+    async def _work() -> ToolResult:
+        return _validated(
+            "capabilities",
+            _build_capabilities(),
+            {"fingerprint": _FINGERPRINT},
+        )
 
     return await _dispatch(_work)
 
