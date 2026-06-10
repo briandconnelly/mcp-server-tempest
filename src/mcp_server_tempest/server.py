@@ -572,16 +572,18 @@ _CAPABILITY_CONTRACT: dict = {
     "timestamps": (
         "Upstream weather timestamps are Unix epoch seconds, as provided by "
         "WeatherFlow; interpret local-time fields with the station's IANA "
-        "`timezone`. Server-generated timestamps (e.g. _meta.ts_retrieved) "
-        "are RFC3339 UTC."
+        "`timezone`. Server-generated timestamps (e.g. ts_retrieved in "
+        '_meta["net.bconnelly.tempest/fetch"]) are RFC3339 UTC.'
     ),
     "caching": (
-        "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for all tools; disk "
-        "(WEATHERFLOW_DISK_CACHE_TTL, default 86400s) for stations and "
-        "station_details. Each tool result carries cache provenance under "
-        '_meta["net.bconnelly.tempest/fetch"]: {cache, fingerprint, '
-        "ts_retrieved}; ts_retrieved is included when the fetch time is "
-        "known (it may be omitted on some cache hits)."
+        "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for the weather-data "
+        "tools; disk (WEATHERFLOW_DISK_CACHE_TTL, default 86400s) for "
+        "stations and station_details. Each weather-data tool result carries "
+        'cache provenance under _meta["net.bconnelly.tempest/fetch"]: '
+        "{cache, fingerprint, ts_retrieved}; ts_retrieved is included when "
+        "the fetch time is known (it may be omitted on some cache hits). "
+        "tempest_get_capabilities is static — no upstream fetch or cache — "
+        "so its _meta carries only {fingerprint}."
     ),
 }
 
@@ -597,7 +599,14 @@ def _registered_input_schemas() -> dict[str, dict]:
     mcp.list_tools(), so a FastMCP upgrade that moves the registry fails
     loudly instead of silently fingerprinting the wrong contract.
     """
-    components = mcp._local_provider._components  # noqa: SLF001
+    try:
+        components = mcp._local_provider._components  # noqa: SLF001
+    except AttributeError as exc:
+        raise RuntimeError(
+            "FastMCP's local tool registry has moved; cannot compute the "
+            "capability fingerprint over input schemas. Update "
+            "_registered_input_schemas for this FastMCP version."
+        ) from exc
     schemas: dict[str, dict] = {}
     for component in components.values():
         if not isinstance(component, Tool):
@@ -607,8 +616,8 @@ def _registered_input_schemas() -> dict[str, dict]:
         schemas[component.name] = params
     if not schemas:
         raise RuntimeError(
-            "FastMCP local tool registry is empty or has moved; cannot "
-            "compute the capability fingerprint over input schemas."
+            "FastMCP local tool registry is empty; cannot compute the "
+            "capability fingerprint over input schemas."
         )
     return schemas
 
