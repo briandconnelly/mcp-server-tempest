@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-06-09
+
+Agent-friendliness remediations from an MCP contract audit of the 0.8.0
+surface (no Critical/Major findings; this addresses the remaining Minor/Nit
+items). Plan reviewed with Codex; PR reviewed by Codex and GitHub Copilot.
+
+### Breaking
+
+- Tool-result `_meta` is now namespaced: the flat `cache`, `fingerprint`, and
+  `ts_retrieved` keys moved under `_meta["net.bconnelly.tempest/fetch"]`.
+  MCP reserves unprefixed `_meta` names for the protocol; there is no
+  deprecation shim.
+- `tempest_get_forecast` honors explicit `hours`/`days` as given in both
+  modes; the 6 hourly / 2 daily summary caps apply only when an axis is
+  omitted. Explicit requests beyond 6/2 in summary mode now return what was
+  asked for instead of clipping. `detailed` is purely a field-density toggle,
+  and `truncation_hint` is a factual upstream-shortfall note (there is no
+  repair — the missing entries do not exist upstream).
+- `fastmcp` dependency narrowed from `>=3.1` to `>=3.4,<4`: the fingerprint
+  now reads FastMCP's tool registry, so an unbounded range could let a
+  future major break import.
+
+### Added
+
+- `tempest_get_capabilities` tool mirroring the `tempest://capabilities`
+  resource, for clients that surface MCP resources poorly. Requires no API
+  token and makes no upstream call; its output schema is deliberately
+  permissive (`additionalProperties: true`) so additive summary fields are
+  never breaking.
+
+### Changed
+
+- The capability fingerprint now covers tool input schemas, derived from the
+  live FastMCP registry exactly as clients see them (dialect-stamped). The
+  "input-schema changes are reflected only via a version bump" carve-out is
+  gone from `fingerprint_covers`. A guard test compares the registry read
+  against public `list_tools()` so a FastMCP upgrade fails loudly.
+- Tool annotations: `openWorldHint` is now `false` on every tool (one fixed
+  upstream, closed entity set — network I/O alone is not open-world);
+  `idempotentHint` is dropped (the MCP spec scopes it to non-read-only
+  tools).
+- Capability prose and instructions now state cache scope per tool and name
+  the namespaced `_meta` key.
+
+### Fixed
+
+- The local prek `ty` gate had started failing on `main` (TTLCache generic
+  inference); the two module caches now carry explicit type parameters.
+
 ## [0.8.0] - 2026-06-06
 
 Agent-friendliness hardening from a contract audit (no Critical/Major findings;
