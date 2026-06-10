@@ -1362,6 +1362,27 @@ class TestMcpRegistry:
         assert await mcp.list_resource_templates() == []
 
 
+class TestToolAnnotations:
+    """Every tool is a read against a fixed upstream about a closed set of
+    entities (the user's own stations): readOnlyHint=true, openWorldHint=false.
+    idempotentHint must be absent — per the MCP spec it is only meaningful
+    when readOnlyHint is false, so declaring it is contract noise."""
+
+    async def test_annotations_on_every_tool(self):
+        tools = await mcp.list_tools()
+        assert tools
+        for tool in tools:
+            annotations = tool.annotations
+            assert annotations is not None, tool.name
+            assert annotations.readOnlyHint is True, tool.name
+            assert annotations.openWorldHint is False, tool.name
+            assert annotations.idempotentHint is None, (
+                f"{tool.name}: idempotentHint should be omitted (readOnlyHint "
+                "tools are trivially idempotent; the spec scopes the hint to "
+                "non-read-only tools)"
+            )
+
+
 # -- Tests for the capabilities tool --
 
 
@@ -1390,10 +1411,10 @@ class TestCapabilitiesTool:
         assert "tempest_get_capabilities" in names
 
     async def test_meta_carries_fingerprint(self):
-        from mcp_server_tempest.server import _FINGERPRINT
+        from mcp_server_tempest.server import _FINGERPRINT, _META_KEY
 
         result = await get_capabilities()
-        assert result.meta["fingerprint"] == _FINGERPRINT
+        assert result.meta[_META_KEY]["fingerprint"] == _FINGERPRINT
 
     def test_docstring_documents_errors(self):
         doc = get_capabilities.__doc__ or ""
@@ -1704,7 +1725,7 @@ class TestDispatch:
 
 
 async def test_observation_meta_reports_miss_and_fingerprint():
-    from mcp_server_tempest.server import _FINGERPRINT, get_observation
+    from mcp_server_tempest.server import _FINGERPRINT, _META_KEY, get_observation
 
     with patch(
         "mcp_server_tempest.server.api_get_observation",
@@ -1714,13 +1735,26 @@ async def test_observation_meta_reports_miss_and_fingerprint():
             cache.clear()
             result = await get_observation(station_id=12345)
 
-    assert result.meta["cache"] == "miss"
-    assert result.meta["fingerprint"] == _FINGERPRINT
-    assert result.meta["ts_retrieved"].endswith(("+00:00", "Z"))
+    fetch_meta = result.meta[_META_KEY]
+    assert fetch_meta["cache"] == "miss"
+    assert fetch_meta["fingerprint"] == _FINGERPRINT
+    assert fetch_meta["ts_retrieved"].endswith(("+00:00", "Z"))
+    # The old flat keys must be gone: unprefixed _meta names are reserved
+    # for the MCP protocol itself.
+    for flat_key in ("cache", "fingerprint", "ts_retrieved"):
+        assert flat_key not in result.meta
+
+
+def test_meta_key_is_reverse_dns_prefixed():
+    from mcp_server_tempest.server import _META_KEY
+
+    prefix, _, name = _META_KEY.partition("/")
+    assert prefix == "net.bconnelly.tempest"
+    assert name == "fetch"
 
 
 async def test_observation_meta_reports_memory_hit():
-    from mcp_server_tempest.server import get_observation
+    from mcp_server_tempest.server import _META_KEY, get_observation
 
     with patch(
         "mcp_server_tempest.server.api_get_observation",
@@ -1731,7 +1765,7 @@ async def test_observation_meta_reports_memory_hit():
             await get_observation(station_id=12345)  # populate
             result = await get_observation(station_id=12345)  # hit
 
-    assert result.meta["cache"] == "memory"
+    assert result.meta[_META_KEY]["cache"] == "memory"
 
 
 def test_validated_rejects_drifted_dict():

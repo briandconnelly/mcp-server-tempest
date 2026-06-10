@@ -184,12 +184,20 @@ def _iso(ts_epoch: float | None) -> str | None:
     return None if ts_epoch is None else datetime.fromtimestamp(ts_epoch, tz=UTC).isoformat()
 
 
+# All convention metadata on tool results lives under this single prefixed
+# _meta key (MCP reserves unprefixed _meta names for the protocol; the
+# reverse-DNS prefix is the spec's collision guard). Grouped under one key
+# rather than three prefixed siblings to keep payloads and the capability
+# prose compact.
+_META_KEY = "net.bconnelly.tempest/fetch"
+
+
 def _meta_for(fetched: Fetched) -> dict:
-    meta: dict = {"cache": fetched.cache, "fingerprint": _FINGERPRINT}
+    fetch_meta: dict = {"cache": fetched.cache, "fingerprint": _FINGERPRINT}
     iso = _iso(fetched.ts_epoch)
     if iso is not None:
-        meta["ts_retrieved"] = iso
-    return meta
+        fetch_meta["ts_retrieved"] = iso
+    return {_META_KEY: fetch_meta}
 
 
 disk_cache: DiskCache | None = None
@@ -292,8 +300,9 @@ SETUP (required):
 SERVER SURFACE: mcp-server-tempest@{version}. Read tempest://capabilities (or
 call tempest_get_capabilities if your client does not expose MCP resources)
 for the structured surface summary (scope, tools, error codes, fingerprint).
-Each tool result also carries the fingerprint in _meta; it changes on any
-tool/schema/error-code/instructions change.
+Each tool result also carries the fingerprint in
+_meta["net.bconnelly.tempest/fetch"]; it changes on any tool/schema/
+error-code/instructions change.
 
 TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
 `uvx`) speaks MCP over stdio.
@@ -568,9 +577,10 @@ _CAPABILITY_CONTRACT: dict = {
     "caching": (
         "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for all tools; disk "
         "(WEATHERFLOW_DISK_CACHE_TTL, default 86400s) for stations and "
-        "station_details. Each tool result carries _meta.cache and "
-        "_meta.fingerprint; _meta.ts_retrieved is included when the fetch "
-        "time is known (it may be omitted on some cache hits)."
+        "station_details. Each tool result carries cache provenance under "
+        '_meta["net.bconnelly.tempest/fetch"]: {cache, fingerprint, '
+        "ts_retrieved}; ts_retrieved is included when the fetch time is "
+        "known (it may be omitted on some cache hits)."
     ),
 }
 
@@ -859,14 +869,18 @@ async def _get_observation_data(
     return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
 
 
+# Annotation policy, applied to every tool below: openWorldHint is False
+# because the server talks to one fixed upstream (the WeatherFlow API) about
+# a closed set of entities (the user's own stations) — network I/O alone does
+# not make a tool open-world. idempotentHint is omitted because the MCP spec
+# defines it as meaningful only when readOnlyHint is false.
 @mcp.tool(
     name="tempest_get_stations",
     tags={"weather", "stations"},
     annotations={
         "title": "Get Weather Stations",
         "readOnlyHint": True,
-        "openWorldHint": True,
-        "idempotentHint": True,
+        "openWorldHint": False,
     },
     output_schema=_STATIONS_SCHEMA,
 )
@@ -916,8 +930,7 @@ async def get_stations(
     annotations={
         "title": "Get Weather Station Information",
         "readOnlyHint": True,
-        "openWorldHint": True,
-        "idempotentHint": True,
+        "openWorldHint": False,
     },
     output_schema=_STATION_SCHEMA,
 )
@@ -970,8 +983,7 @@ async def get_station_details(
     annotations={
         "title": "Get Weather Forecast for a Station",
         "readOnlyHint": True,
-        "openWorldHint": True,
-        "idempotentHint": True,
+        "openWorldHint": False,
     },
     output_schema=_FORECAST_SCHEMA,
 )
@@ -1134,8 +1146,7 @@ async def get_forecast(
     annotations={
         "title": "Get Current Weather Observations for a Station",
         "readOnlyHint": True,
-        "openWorldHint": True,
-        "idempotentHint": True,
+        "openWorldHint": False,
     },
     output_schema=_OBSERVATION_SCHEMA,
 )
@@ -1211,8 +1222,7 @@ async def get_observation(
     annotations={
         "title": "Get Server Capabilities",
         "readOnlyHint": True,
-        "openWorldHint": True,
-        "idempotentHint": True,
+        "openWorldHint": False,
     },
     output_schema=_CAPABILITIES_OUTPUT_SCHEMA,
 )
@@ -1244,7 +1254,7 @@ async def get_capabilities() -> ToolResult:
         return _validated(
             "capabilities",
             _build_capabilities(),
-            {"fingerprint": _FINGERPRINT},
+            {_META_KEY: {"fingerprint": _FINGERPRINT}},
         )
 
     return await _dispatch(_work)
