@@ -281,7 +281,8 @@ NOTES:
 
 AMBIENT STATE (affects freshness and cache repair):
 - WEATHERFLOW_CACHE_TTL (default 300s) and WEATHERFLOW_CACHE_SIZE
-  (default 100): in-memory cache used by all four tools.
+  (default 100): in-memory cache used by every tool that fetches upstream
+  (tempest_get_capabilities is static and uses no cache).
 - WEATHERFLOW_DISK_CACHE_TTL (default 86400s): disk cache for
   tempest_get_stations and tempest_get_station_details only. Survives restarts; per-token
   subdirectory (hash-keyed for account isolation) under
@@ -576,14 +577,15 @@ _CAPABILITY_CONTRACT: dict = {
         '_meta["net.bconnelly.tempest/fetch"]) are RFC3339 UTC.'
     ),
     "caching": (
-        "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for the weather-data "
-        "tools; disk (WEATHERFLOW_DISK_CACHE_TTL, default 86400s) for "
-        "stations and station_details. Each weather-data tool result carries "
-        'cache provenance under _meta["net.bconnelly.tempest/fetch"]: '
-        "{cache, fingerprint, ts_retrieved}; ts_retrieved is included when "
-        "the fetch time is known (it may be omitted on some cache hits). "
-        "tempest_get_capabilities is static — no upstream fetch or cache — "
-        "so its _meta carries only {fingerprint}."
+        "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for every tool that "
+        "fetches upstream (stations, station_details, observation, forecast); "
+        "stations and station_details additionally use a disk cache "
+        "(WEATHERFLOW_DISK_CACHE_TTL, default 86400s). Each fetching tool's "
+        'result carries cache provenance under _meta["net.bconnelly.tempest/'
+        'fetch"]: {cache, fingerprint, ts_retrieved}; ts_retrieved is '
+        "included when the fetch time is known (it may be omitted on some "
+        "cache hits). tempest_get_capabilities is static — no upstream fetch "
+        "or cache — so its _meta carries only {fingerprint}."
     ),
 }
 
