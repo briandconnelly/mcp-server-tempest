@@ -377,8 +377,9 @@ class ForecastResponse(BaseModel):
             "True iff fewer entries were returned than the agent EXPLICITLY "
             "requested (returned_hours < requested_hours or returned_days < "
             "requested_days). A plain call that omits hours/days is never "
-            "truncated. Causes: a summary-mode cap clipping an explicit "
-            "request (see truncation_hint), or an upstream shortfall."
+            "truncated. The only cause is an upstream shortfall: explicit "
+            "hours/days are honored as given in both summary and detailed "
+            "modes, so no server-side cap can clip them."
         ),
     )
     requested_hours: int | None = Field(
@@ -398,8 +399,9 @@ class ForecastResponse(BaseModel):
     truncation_hint: str | None = Field(
         default=None,
         description=(
-            "Repair hint; present only when a summary-mode cap clipped an "
-            "explicit request (pass detailed=true for full ranges)."
+            "Factual note, present only when truncated=true; states how many "
+            "entries upstream supplied versus the explicit request. Not a "
+            "repair — the missing entries do not exist upstream."
         ),
     )
 

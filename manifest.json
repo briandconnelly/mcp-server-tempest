@@ -102,6 +102,10 @@
     {
       "name": "tempest_get_forecast",
       "description": "Hourly + daily forecast plus a current snapshot."
+    },
+    {
+      "name": "tempest_get_capabilities",
+      "description": "Structured surface summary; mirrors the tempest://capabilities resource for clients without resource support."
     }
   ]
 }

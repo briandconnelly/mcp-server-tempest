@@ -26,6 +26,7 @@ from mcp_server_tempest.server import (
     _int_env,
     _relaxed_schema,
     cache,
+    get_capabilities,
     get_forecast,
     get_observation,
     get_station_details,
@@ -676,7 +677,7 @@ class TestForecastDepth:
             return_value=SAMPLE_FORECAST_DATA,
         ):
             result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
-            # Summary mode defaults: min(12, 6)=6 hourly, min(5, 2)=2 daily
+            # Summary mode defaults when hours/days are omitted: 6 hourly, 2 daily
             assert len(result["forecast"]["hourly"]) == 6
             assert len(result["forecast"]["daily"]) == 2
 
@@ -808,36 +809,45 @@ class TestEmptyData:
             assert result["obs"] == []
 
 
-# -- Tests for summary mode caps --
+# -- Tests for explicit depth overriding summary defaults --
 
 
 @pytest.mark.usefixtures("_set_token")
-class TestSummaryModeCaps:
-    async def test_summary_caps_hours_at_6(self, mock_ctx):
-        """Passing hours=10 in summary mode should still cap at 6."""
+class TestExplicitDepthHonored:
+    """Explicit hours/days are honored as given in both modes; the summary
+    defaults (6 hourly / 2 daily) apply only when an axis is omitted. An
+    agent that wants 10 summary-density hours gets exactly that, with no
+    second call through detailed=True."""
+
+    async def test_summary_honors_explicit_hours(self, mock_ctx):
         with patch(
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
             result = _structured(await get_forecast(station_id=12345, hours=10, ctx=mock_ctx))
-            assert len(result["forecast"]["hourly"]) == 6
-            assert result["truncated"] is True
+            assert len(result["forecast"]["hourly"]) == 10
+            assert result["truncated"] is False
             assert result["requested_hours"] == 10
-            assert result["returned_hours"] == 6
-            assert "truncation_hint" in result
+            assert result["returned_hours"] == 10
+            assert "truncation_hint" not in result
+            # Omitted axis keeps the summary default.
+            assert result["returned_days"] == 2
+            # Summary density is preserved: an explicit count must not
+            # flip the response to detailed mode.
+            assert "latitude" not in result
 
-    async def test_summary_caps_days_at_2(self, mock_ctx):
-        """Passing days=8 in summary mode should still cap at 2."""
+    async def test_summary_honors_explicit_days(self, mock_ctx):
         with patch(
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
         ):
             result = _structured(await get_forecast(station_id=12345, days=8, ctx=mock_ctx))
-            assert len(result["forecast"]["daily"]) == 2
-            assert result["truncated"] is True
+            assert len(result["forecast"]["daily"]) == 8
+            assert result["truncated"] is False
             assert result["requested_days"] == 8
-            assert result["returned_days"] == 2
-            assert "truncation_hint" in result
+            assert result["returned_days"] == 8
+            assert "truncation_hint" not in result
+            assert result["returned_hours"] == 6
 
 
 # -- Tests for forecast truncation transparency fields --
@@ -906,9 +916,8 @@ class TestForecastTruncationFields:
 
     async def test_detailed_mode_upstream_shortfall(self, mock_ctx):
         """If upstream returns fewer entries than requested, truncated=True
-        even in detailed mode — but no truncation_hint, because summary
-        caps weren't the cause and there's no actionable repair beyond
-        what requested_*/returned_* already convey.
+        and truncation_hint states the shortfall factually — there is no
+        repair, because the missing entries do not exist upstream.
         """
         short_forecast = {
             **SAMPLE_FORECAST_DATA,
@@ -929,7 +938,34 @@ class TestForecastTruncationFields:
             assert result["returned_hours"] == 10
             assert result["requested_days"] == 7
             assert result["returned_days"] == 3
-            assert "truncation_hint" not in result
+            hint = result["truncation_hint"]
+            assert "only 10 hourly" in hint
+            assert "requested_hours=24" in hint
+            assert "only 3 daily" in hint
+            assert "requested_days=7" in hint
+
+    async def test_summary_mode_upstream_shortfall(self, mock_ctx):
+        """The shortfall contract is mode-independent: an explicit request
+        beyond what upstream supplies is truncated in summary mode too."""
+        short_forecast = {
+            **SAMPLE_FORECAST_DATA,
+            "forecast": {
+                "daily": [_make_daily_forecast(1)],  # only 1
+                "hourly": [_make_hourly_forecast(h) for h in range(4)],  # only 4
+            },
+        }
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=short_forecast,
+        ):
+            result = _structured(await get_forecast(station_id=12345, hours=8, ctx=mock_ctx))
+            assert result["truncated"] is True
+            assert result["requested_hours"] == 8
+            assert result["returned_hours"] == 4
+            assert "only 4 hourly" in result["truncation_hint"]
+            # The omitted days axis is not truncated and not echoed.
+            assert "requested_days" not in result
+            assert result["returned_days"] == 1
 
     async def test_factual_fields_always_present(self, mock_ctx):
         """truncated/returned_* are always present so agents get a consistent
@@ -1233,6 +1269,7 @@ class TestServerInstructions:
             "tempest_get_station_details",
             "tempest_get_observation",
             "tempest_get_forecast",
+            "tempest_get_capabilities",
         ):
             assert tool_name in text, f"{tool_name} missing from instructions"
 
@@ -1299,6 +1336,7 @@ class TestMcpRegistry:
         "tempest_get_station_details",
         "tempest_get_forecast",
         "tempest_get_observation",
+        "tempest_get_capabilities",
     }
 
     REMOVED_TOOLS = {
@@ -1322,6 +1360,66 @@ class TestMcpRegistry:
         uris = {str(r.uri) for r in resources}
         assert uris == {"tempest://capabilities"}
         assert await mcp.list_resource_templates() == []
+
+
+class TestToolAnnotations:
+    """Every tool is a read against a fixed upstream about a closed set of
+    entities (the user's own stations): readOnlyHint=true, openWorldHint=false.
+    idempotentHint must be absent — per the MCP spec it is only meaningful
+    when readOnlyHint is false, so declaring it is contract noise."""
+
+    async def test_annotations_on_every_tool(self):
+        tools = await mcp.list_tools()
+        assert tools
+        for tool in tools:
+            annotations = tool.annotations
+            assert annotations is not None, tool.name
+            assert annotations.readOnlyHint is True, tool.name
+            assert annotations.openWorldHint is False, tool.name
+            assert annotations.idempotentHint is None, (
+                f"{tool.name}: idempotentHint should be omitted (readOnlyHint "
+                "tools are trivially idempotent; the spec scopes the hint to "
+                "non-read-only tools)"
+            )
+
+
+# -- Tests for the capabilities tool --
+
+
+class TestCapabilitiesTool:
+    """tempest_get_capabilities mirrors the tempest://capabilities resource
+    for clients that surface MCP resources poorly (F1 from the
+    agent-friendliness audit)."""
+
+    async def test_mirrors_capabilities_resource(self):
+        import fastmcp
+
+        with patch.dict(os.environ, {"WEATHERFLOW_API_TOKEN": "t"}):
+            async with fastmcp.Client(mcp) as c:
+                resource = await c.read_resource("tempest://capabilities")
+                tool_result = await c.call_tool("tempest_get_capabilities", {})
+        assert tool_result.structured_content == json.loads(resource[0].text)
+
+    async def test_works_without_token(self):
+        """Capability discovery must not require credentials — it is the
+        cold-start surface an agent reads before setup is complete."""
+        with patch.dict(os.environ, {}, clear=True):
+            result = await get_capabilities()
+        payload = result.structured_content
+        assert payload["fingerprint"].startswith("sha256:")
+        names = {t["name"] for t in payload["tools"]}
+        assert "tempest_get_capabilities" in names
+
+    async def test_meta_carries_fingerprint(self):
+        from mcp_server_tempest.server import _FINGERPRINT, _META_KEY
+
+        result = await get_capabilities()
+        assert result.meta[_META_KEY]["fingerprint"] == _FINGERPRINT
+
+    def test_docstring_documents_errors(self):
+        doc = get_capabilities.__doc__ or ""
+        assert "Errors:" in doc
+        assert "internal_error" in doc
 
 
 # -- Tests for per-tool error code documentation --
@@ -1627,7 +1725,7 @@ class TestDispatch:
 
 
 async def test_observation_meta_reports_miss_and_fingerprint():
-    from mcp_server_tempest.server import _FINGERPRINT, get_observation
+    from mcp_server_tempest.server import _FINGERPRINT, _META_KEY, get_observation
 
     with patch(
         "mcp_server_tempest.server.api_get_observation",
@@ -1637,13 +1735,26 @@ async def test_observation_meta_reports_miss_and_fingerprint():
             cache.clear()
             result = await get_observation(station_id=12345)
 
-    assert result.meta["cache"] == "miss"
-    assert result.meta["fingerprint"] == _FINGERPRINT
-    assert result.meta["ts_retrieved"].endswith(("+00:00", "Z"))
+    fetch_meta = result.meta[_META_KEY]
+    assert fetch_meta["cache"] == "miss"
+    assert fetch_meta["fingerprint"] == _FINGERPRINT
+    assert fetch_meta["ts_retrieved"].endswith(("+00:00", "Z"))
+    # The old flat keys must be gone: unprefixed _meta names are reserved
+    # for the MCP protocol itself.
+    for flat_key in ("cache", "fingerprint", "ts_retrieved"):
+        assert flat_key not in result.meta
+
+
+def test_meta_key_is_reverse_dns_prefixed():
+    from mcp_server_tempest.server import _META_KEY
+
+    prefix, _, name = _META_KEY.partition("/")
+    assert prefix == "net.bconnelly.tempest"
+    assert name == "fetch"
 
 
 async def test_observation_meta_reports_memory_hit():
-    from mcp_server_tempest.server import get_observation
+    from mcp_server_tempest.server import _META_KEY, get_observation
 
     with patch(
         "mcp_server_tempest.server.api_get_observation",
@@ -1654,18 +1765,17 @@ async def test_observation_meta_reports_memory_hit():
             await get_observation(station_id=12345)  # populate
             result = await get_observation(station_id=12345)  # hit
 
-    assert result.meta["cache"] == "memory"
+    assert result.meta[_META_KEY]["cache"] == "memory"
 
 
 def test_validated_rejects_drifted_dict():
     # Drift = a dict that violates the locked output schema. _validated must
     # raise internal_error rather than ship it (the _meta path bypasses the
     # server's own output validation; _validated is the safety net).
-    from mcp_server_tempest.server import Fetched, _validated
+    from mcp_server_tempest.server import _validated
 
-    fetched = Fetched(data=None, cache="miss", ts_epoch=1.0)
     with pytest.raises(WeatherFlowError) as exc:
-        _validated("observation", {"NOT_A_REAL_FIELD": 1}, fetched)
+        _validated("observation", {"NOT_A_REAL_FIELD": 1}, {})
     assert exc.value.code == ErrorCode.INTERNAL_ERROR
 
 
