@@ -37,6 +37,7 @@ Example Usage:
     forecast = await client.call_tool("tempest_get_forecast", {"station_id": 12345})
 """
 
+import copy
 import hashlib
 import json
 import logging
@@ -53,7 +54,7 @@ from typing import Annotated, Any, Generic, Literal, TypeVar
 from cachetools import TTLCache
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
-from fastmcp.tools.base import ToolResult
+from fastmcp.tools.base import Tool, ToolResult
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel, Field
 
@@ -559,9 +560,9 @@ _CAPABILITY_CONTRACT: dict = {
         "error_codes); do not parse `message`."
     ),
     "fingerprint_covers": (
-        "version, wire tool names, output schemas, error codes, instructions, "
-        "and this capability contract (scope, tool purposes, error channel, "
-        "latency). Input-schema changes are reflected only via a version bump."
+        "version, wire tool names, input and output schemas, error codes, "
+        "instructions, and this capability contract (scope, tool purposes, "
+        "error channel, latency)."
     ),
     "latency": (
         "Each tool makes at most one upstream WeatherFlow call with a 15s total "
@@ -585,27 +586,49 @@ _CAPABILITY_CONTRACT: dict = {
 }
 
 
+def _registered_input_schemas() -> dict[str, dict]:
+    """Input schemas for every registered tool, exactly as clients see them.
+
+    Deep-copies each registered tool's generated parameters and stamps the
+    JSON Schema dialect the same way TempestContractMiddleware.on_list_tools
+    does, so the fingerprint hashes the wire shape. Reads FastMCP's local
+    component registry synchronously — the public list_tools() API is async
+    and unusable at import time. Tests compare this output against
+    mcp.list_tools(), so a FastMCP upgrade that moves the registry fails
+    loudly instead of silently fingerprinting the wrong contract.
+    """
+    components = mcp._local_provider._components  # noqa: SLF001
+    schemas: dict[str, dict] = {}
+    for component in components.values():
+        if not isinstance(component, Tool):
+            continue
+        params = copy.deepcopy(component.parameters)
+        params.setdefault("$schema", JSON_SCHEMA_DIALECT)
+        schemas[component.name] = params
+    if not schemas:
+        raise RuntimeError(
+            "FastMCP local tool registry is empty or has moved; cannot "
+            "compute the capability fingerprint over input schemas."
+        )
+    return schemas
+
+
 def _compute_fingerprint() -> str:
     """Deterministic hash of the agent-visible authored surface.
 
-    Covers: package version, wire tool names, output schemas, error codes, the
-    instructions text, and the capability contract (_CAPABILITY_CONTRACT —
-    scope/negative-scope/tool purposes/error channel/latency). Input schemas
-    are NOT hashed directly — an input-contract change requires a version bump,
-    which moves this fingerprint. Stated in capabilities.fingerprint_covers.
+    Covers: package version, wire tool names, input and output schemas, error
+    codes, the instructions text, and the capability contract
+    (_CAPABILITY_CONTRACT — scope/negative-scope/tool purposes/error channel/
+    latency). Must be called after all tools are registered: tool names and
+    input schemas come from the live registry, so the resulting _FINGERPRINT
+    assignment sits at the end of this module.
     """
+    input_schemas = _registered_input_schemas()
     surface = json.dumps(
         {
             "version": _PKG_VERSION,
-            "tools": sorted(
-                [
-                    "tempest_get_stations",
-                    "tempest_get_station_details",
-                    "tempest_get_observation",
-                    "tempest_get_forecast",
-                    "tempest_get_capabilities",
-                ]
-            ),
+            "tools": sorted(input_schemas),
+            "input_schemas": input_schemas,
             "output_schemas": {
                 "stations": _STATIONS_SCHEMA,
                 "station": _STATION_SCHEMA,
@@ -621,9 +644,6 @@ def _compute_fingerprint() -> str:
         separators=(",", ":"),
     )
     return "sha256:" + hashlib.sha256(surface.encode()).hexdigest()[:16]
-
-
-_FINGERPRINT = _compute_fingerprint()
 
 
 # The server skips its own output validation when a ToolResult carries _meta,
@@ -1258,6 +1278,13 @@ async def get_capabilities() -> ToolResult:
         )
 
     return await _dispatch(_work)
+
+
+# Computed after every tool above is registered: the fingerprint derives tool
+# names and input schemas from the live registry (see _compute_fingerprint).
+# Tool bodies and the capabilities resource only read this at request time,
+# so the late assignment is safe.
+_FINGERPRINT = _compute_fingerprint()
 
 
 if __name__ == "__main__":

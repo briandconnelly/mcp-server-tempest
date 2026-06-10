@@ -56,6 +56,31 @@ def test_capability_contract_is_fingerprinted():
         assert s._compute_fingerprint() != baseline
 
 
+def test_input_schema_change_moves_fingerprint():
+    """An input-contract change (new constraint, renamed parameter, changed
+    description) must move the fingerprint without requiring a version bump."""
+    from mcp_server_tempest import server as s
+
+    baseline = s._compute_fingerprint()
+    mutated = s._registered_input_schemas()
+    mutated["tempest_get_forecast"]["properties"]["hours"]["description"] = "changed"
+    with patch.object(s, "_registered_input_schemas", return_value=mutated):
+        assert s._compute_fingerprint() != baseline
+
+
+async def test_fingerprinted_input_schemas_match_list_tools():
+    """_registered_input_schemas reads FastMCP's private local registry; this
+    guard compares it against the public (async) list_tools surface so a
+    FastMCP upgrade that moves the registry fails loudly here instead of
+    silently fingerprinting the wrong contract."""
+    from mcp_server_tempest import server as s
+
+    hashed = s._registered_input_schemas()
+    async with fastmcp.Client(s.mcp) as c:
+        live = {t.name: t.inputSchema for t in await c.list_tools()}
+    assert hashed == live
+
+
 def test_fingerprint_is_deterministic_across_reload():
     """Verify the fingerprint value is stable across fresh imports.
 
