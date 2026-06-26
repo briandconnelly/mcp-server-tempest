@@ -1748,7 +1748,7 @@ wheels = [
 
 [[package]]
 name = "weatherflow4py"
-version = "1.5.4"
+version = "1.5.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1756,9 +1756,9 @@ dependencies = [
     { name = "marshmallow" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/28/76/e9b102756b69b6dadb889c115c6d5ee2067d8a3b48e9525fa2d55224abb9/weatherflow4py-1.5.4.tar.gz", hash = "sha256:cee8e840a2fdc986f279ba2e19ce79788b68c02d3dfd592c064ee2f91e4d188f", size = 141168, upload-time = "2026-04-23T14:54:02.74Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/e7/2df012b6a0b516290c3282dfe91f7e10691b878857ada439f7affd1c4fe7/weatherflow4py-1.5.7.tar.gz", hash = "sha256:8e41c1fb4729ebe9ebf9fff08185116f4e0650afeebdcba5a7eacfe034dd20eb", size = 145461, upload-time = "2026-06-15T18:47:45.45Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0a/17/802b19537c0fccaad1a09f960d7e3e38042c8cac828b180eba11dec01b7d/weatherflow4py-1.5.4-py3-none-any.whl", hash = "sha256:94a1ce0d86bb0acf1b9f7bcd754ba90f637141022b3e55779b1390d28d79fc73", size = 23372, upload-time = "2026-04-23T14:54:01.348Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/7e/771e69106ad2f093785d8fc4d17b3db9e73e830fcf7d666002c03326fcc1/weatherflow4py-1.5.7-py3-none-any.whl", hash = "sha256:748cb191eb747265c6bd86a98ea5dc30a71f108a42553db6f980879df99ba948", size = 23725, upload-time = "2026-06-15T18:47:43.99Z" },
 ]
 
 [[package]]
