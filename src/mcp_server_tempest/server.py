@@ -900,18 +900,20 @@ async def _get_observation_data(
     return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
 
 
-# Annotation policy, applied to every tool below: openWorldHint is False
-# because the server talks to one fixed upstream (the WeatherFlow API) about
-# a closed set of entities (the user's own stations) — network I/O alone does
-# not make a tool open-world. idempotentHint is omitted because the MCP spec
-# defines it as meaningful only when readOnlyHint is false.
+# Annotation policy, applied to every tool below. openWorldHint reflects the
+# tool's interaction boundary, per the MCP tool-annotations guidance: the four
+# WeatherFlow-backed tools reach an external service and return externally
+# mutable data (live weather, station config that can change outside this
+# server), so they are open-world (True); tempest_get_capabilities is static
+# and local, so it stays closed-world (False). idempotentHint is omitted
+# because the MCP spec defines it as meaningful only when readOnlyHint is false.
 @mcp.tool(
     name="tempest_get_stations",
     tags={"weather", "stations"},
     annotations={
         "title": "Get Weather Stations",
         "readOnlyHint": True,
-        "openWorldHint": False,
+        "openWorldHint": True,
     },
     output_schema=_STATIONS_SCHEMA,
 )
@@ -961,7 +963,7 @@ async def get_stations(
     annotations={
         "title": "Get Weather Station Information",
         "readOnlyHint": True,
-        "openWorldHint": False,
+        "openWorldHint": True,
     },
     output_schema=_STATION_SCHEMA,
 )
@@ -1014,7 +1016,7 @@ async def get_station_details(
     annotations={
         "title": "Get Weather Forecast for a Station",
         "readOnlyHint": True,
-        "openWorldHint": False,
+        "openWorldHint": True,
     },
     output_schema=_FORECAST_SCHEMA,
 )
@@ -1177,7 +1179,7 @@ async def get_forecast(
     annotations={
         "title": "Get Current Weather Observations for a Station",
         "readOnlyHint": True,
-        "openWorldHint": False,
+        "openWorldHint": True,
     },
     output_schema=_OBSERVATION_SCHEMA,
 )

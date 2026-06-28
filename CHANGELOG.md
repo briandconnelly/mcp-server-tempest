@@ -26,6 +26,15 @@ Claude + Codex). PR implemented with Claude and reviewed by Codex.
   a multi-user host. Pre-existing loose permissions are migrated in place on
   startup (#61).
 
+### Changed
+
+- Tool annotations: `openWorldHint` is now `true` on the four WeatherFlow-backed
+  tools (`tempest_get_stations`, `tempest_get_station_details`,
+  `tempest_get_observation`, `tempest_get_forecast`), which reach an external
+  service and return externally mutable data. It stays `false` on the static
+  `tempest_get_capabilities`. This corrects the prior blanket `false`, which
+  conflated a closed entity set with a closed interaction boundary (#58).
+
 ## [0.9.0] - 2026-06-09
 
 Agent-friendliness remediations from an MCP contract audit of the 0.8.0

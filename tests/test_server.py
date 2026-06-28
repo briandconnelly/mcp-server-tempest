@@ -1363,19 +1363,31 @@ class TestMcpRegistry:
 
 
 class TestToolAnnotations:
-    """Every tool is a read against a fixed upstream about a closed set of
-    entities (the user's own stations): readOnlyHint=true, openWorldHint=false.
+    """Every tool is read-only (readOnlyHint=true). openWorldHint reflects the
+    interaction boundary: the four WeatherFlow-backed tools reach an external
+    service and return externally mutable data (openWorldHint=true), while the
+    static tempest_get_capabilities stays closed-world (openWorldHint=false).
     idempotentHint must be absent — per the MCP spec it is only meaningful
     when readOnlyHint is false, so declaring it is contract noise."""
+
+    # Tools mapped to their expected openWorldHint value.
+    _OPEN_WORLD = {
+        "tempest_get_stations": True,
+        "tempest_get_station_details": True,
+        "tempest_get_observation": True,
+        "tempest_get_forecast": True,
+        "tempest_get_capabilities": False,
+    }
 
     async def test_annotations_on_every_tool(self):
         tools = await mcp.list_tools()
         assert tools
+        assert {tool.name for tool in tools} == set(self._OPEN_WORLD)
         for tool in tools:
             annotations = tool.annotations
             assert annotations is not None, tool.name
             assert annotations.readOnlyHint is True, tool.name
-            assert annotations.openWorldHint is False, tool.name
+            assert annotations.openWorldHint is self._OPEN_WORLD[tool.name], tool.name
             assert annotations.idempotentHint is None, (
                 f"{tool.name}: idempotentHint should be omitted (readOnlyHint "
                 "tools are trivially idempotent; the spec scopes the hint to "
