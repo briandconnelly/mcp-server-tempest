@@ -5,6 +5,7 @@ contract that this module implements.
 """
 
 import json
+import re
 import secrets
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -34,6 +35,41 @@ class ErrorCode(StrEnum):
 _TEMPORARY: frozenset[ErrorCode] = frozenset(
     {ErrorCode.RATE_LIMITED, ErrorCode.UPSTREAM_UNAVAILABLE}
 )
+
+# Field names whose reflected value could be a secret. We match on whole
+# name-parts (split on non-alphanumerics and camelCase) rather than substrings,
+# so "api_token"/"apiKey"/"X-Auth-Key" match but "monkey"/"author" do not.
+_SENSITIVE_TOKENS: frozenset[str] = frozenset(
+    {
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "pwd",
+        "passphrase",
+        "auth",
+        "authorization",
+        "bearer",
+        "credential",
+        "credentials",
+        "key",
+        "apikey",
+    }
+)
+_REDACTED = "[redacted]"
+
+
+def _is_sensitive_field(name: str | None) -> bool:
+    """True if a field name looks like it could carry a secret value.
+
+    Defense-in-depth for value reflection: the contract middleware already
+    refuses to reflect untrusted string input, but any WeatherFlowError that
+    sets a value on a sensitively-named field is redacted here too.
+    """
+    if not name:
+        return False
+    parts = re.split(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])", name)
+    return any(p.lower() in _SENSITIVE_TOKENS for p in parts if p)
 
 
 def _new_request_id() -> str:
@@ -87,9 +123,11 @@ class WeatherFlowError(Exception):
         if self.retry_after_ms is not None:
             out["retry_after_ms"] = self.retry_after_ms
         # `value` is included whenever it was set explicitly. We only treat
-        # `None` as "absent" — `0`, `""`, etc. are meaningful.
+        # `None` as "absent" — `0`, `""`, etc. are meaningful. A value on a
+        # sensitively-named field is redacted so a secret is never reflected
+        # back into model context / transcripts / client logs.
         if self.value is not None:
-            out["value"] = self.value
+            out["value"] = _REDACTED if _is_sensitive_field(self.field_name) else self.value
         if self.details:
             out["details"] = self.details
         return out

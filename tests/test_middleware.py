@@ -47,6 +47,36 @@ async def test_unknown_argument_returns_structured_invalid_argument():
     assert payload["field"] == "bogus"
 
 
+async def test_unknown_secret_named_arg_value_not_reflected():
+    # A secret misplaced as an unknown argument must not be echoed back into
+    # model context / transcripts / client logs (issue #57).
+    secret = "sk-super-secret-value"
+    async with _client() as c:
+        r = await c.call_tool("tempest_get_stations", {"api_token": secret}, raise_on_error=False)
+    assert r.is_error
+    payload = json.loads(r.content[0].text)
+    assert payload["code"] == "invalid_argument"
+    assert payload["field"] == "api_token"
+    assert "value" not in payload
+    assert secret not in r.content[0].text
+
+
+async def test_string_value_for_known_int_field_not_reflected():
+    # All tool inputs are numeric/bool; a string is never legitimate and is the
+    # secret-leak vector, so its value is dropped (issue #57).
+    secret = "sk-secret-as-station-id"
+    async with _client() as c:
+        r = await c.call_tool(
+            "tempest_get_observation", {"station_id": secret}, raise_on_error=False
+        )
+    assert r.is_error
+    payload = json.loads(r.content[0].text)
+    assert payload["code"] == "invalid_argument"
+    assert payload["field"] == "station_id"
+    assert "value" not in payload
+    assert secret not in r.content[0].text
+
+
 async def test_tools_use_tempest_prefix():
     async with _client() as c:
         names = {t.name for t in await c.list_tools()}

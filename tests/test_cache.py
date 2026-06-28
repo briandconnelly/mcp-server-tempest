@@ -1,6 +1,8 @@
 """Tests for the disk cache module."""
 
 import json
+import os
+import stat
 import time
 
 import pytest
@@ -132,3 +134,66 @@ class TestDiskCache:
         assert isinstance(got, StationsResponse)
         assert isinstance(ts, float)
         assert dc.get_with_age("missing", StationsResponse) is None
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission semantics")
+class TestPermissions:
+    def test_cache_dir_is_owner_only(self, disk_cache):
+        mode = stat.S_IMODE(os.stat(disk_cache.cache_dir).st_mode)
+        assert mode == 0o700
+
+    def test_cache_file_is_owner_only(self, disk_cache):
+        disk_cache.set("k", SampleModel(name="x", value=1))
+        path = disk_cache._path("k")
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+    def test_preexisting_loose_perms_migrated(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "mcp_server_tempest.cache.user_cache_dir", lambda *_a, **_k: str(tmp_path)
+        )
+        # Simulate an older install: a world-readable dir + file already present.
+        token_dir = tmp_path / _token_hash("test-token")
+        token_dir.mkdir(parents=True)
+        os.chmod(token_dir, 0o755)
+        stale = token_dir / "stations.json"
+        stale.write_text("{}")
+        os.chmod(stale, 0o644)
+
+        DiskCache(token="test-token", ttl=3600)
+
+        assert stat.S_IMODE(os.stat(token_dir).st_mode) == 0o700
+        assert stat.S_IMODE(os.stat(stale).st_mode) == 0o600
+
+    def test_symlinked_cache_dir_is_not_chmodded_through(self, tmp_path, monkeypatch):
+        # If the cache dir is a symlink, we must not chmod/iterate its target.
+        monkeypatch.setattr(
+            "mcp_server_tempest.cache.user_cache_dir", lambda *_a, **_k: str(tmp_path)
+        )
+        target = tmp_path / "real_target"
+        target.mkdir()
+        os.chmod(target, 0o755)
+        link = tmp_path / _token_hash("test-token")
+        link.symlink_to(target, target_is_directory=True)
+
+        DiskCache(token="test-token", ttl=3600)
+
+        # Target's mode is left untouched (not tightened through the symlink).
+        assert stat.S_IMODE(os.stat(target).st_mode) == 0o755
+
+    def test_set_leaves_no_temp_artifacts(self, disk_cache):
+        disk_cache.set("k", SampleModel(name="x", value=1))
+        leftovers = [p.name for p in disk_cache.cache_dir.iterdir() if p.suffix == ".tmp"]
+        assert leftovers == []
+
+
+class TestSetIsBestEffort:
+    def test_set_failure_is_non_fatal_and_cleans_up(self, disk_cache, monkeypatch):
+        # A write failure (full/read-only fs) must not raise out of set() and
+        # must leave no temp artifact behind.
+        monkeypatch.setattr(
+            "mcp_server_tempest.cache.tempfile.mkstemp",
+            lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")),
+        )
+        disk_cache.set("k", SampleModel(name="x", value=1))  # must not raise
+        assert disk_cache.get("k", SampleModel) is None
+        assert list(disk_cache.cache_dir.iterdir()) == []
