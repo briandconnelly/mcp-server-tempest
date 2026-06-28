@@ -110,6 +110,49 @@ class TestWeatherFlowErrorPayload:
         assert wfe.args == ("bad token",)
 
 
+class TestSensitiveFieldRedaction:
+    def test_sensitive_field_value_redacted(self):
+        wfe = WeatherFlowError(
+            code=ErrorCode.INVALID_ARGUMENT,
+            message="bad",
+            field_name="api_token",
+            value="sk-secret",
+        )
+        payload = wfe.to_payload("rid")
+        assert payload["value"] == "[redacted]"
+        assert "sk-secret" not in json.dumps(payload)
+
+    def test_nonsensitive_lookalike_not_redacted(self):
+        # "monkey" contains the substring "key" but must not be redacted.
+        wfe = WeatherFlowError(
+            code=ErrorCode.STATION_NOT_FOUND,
+            message="x",
+            field_name="monkey",
+            value=7,
+        )
+        assert wfe.to_payload("rid")["value"] == 7
+
+    def test_is_sensitive_field_matcher(self):
+        from mcp_server_tempest.errors import _is_sensitive_field
+
+        for name in (
+            "token",
+            "api_token",
+            "apiKey",
+            "API_KEY",
+            "X-Auth-Key",
+            "password",
+            "secret",
+            "auth",
+            "authorization",
+            "bearer",
+            "credentials",
+        ):
+            assert _is_sensitive_field(name), name
+        for name in ("station_id", "monkey", "author", "keystone", "hours", None, ""):
+            assert not _is_sensitive_field(name), name
+
+
 def test_invalid_argument_code_is_nontemporary_and_carries_field():
     from mcp_server_tempest.errors import ErrorCode, WeatherFlowError
 

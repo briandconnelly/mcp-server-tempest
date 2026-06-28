@@ -20,6 +20,27 @@ logger = logging.getLogger(__name__)
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
 
+def _safe_reflected_value(error_type: str | None, raw: object) -> object:
+    """Return a value safe to echo back to the caller, or None to omit it.
+
+    The offending input is attacker-controlled and could be a secret (e.g. an
+    agent passing {"api_token": "sk-..."} as an unknown argument). We reflect a
+    value only when it carries genuine repair signal and cannot be a secret:
+
+    - unknown fields (extra_forbidden) carry no repair value — the field name
+      already tells the caller what to remove — so the value is dropped;
+    - every tool input is numeric/bool, so a *string* input is never a
+      legitimate value and is the realistic secret-leak vector — dropped;
+    - numeric/bool inputs (e.g. station_id=-5) are useful and not secrets.
+    """
+    if error_type == "extra_forbidden":
+        return None
+    # bool is a subclass of int; both, plus float, are safe to reflect.
+    if isinstance(raw, (int, float)):
+        return raw
+    return None
+
+
 def _validation_error_to_weatherflow(exc: ValidationError) -> WeatherFlowError:
     """Map the first Pydantic error to a structured invalid_argument error."""
     first = exc.errors(include_url=False)[0]
@@ -30,7 +51,7 @@ def _validation_error_to_weatherflow(exc: ValidationError) -> WeatherFlowError:
         message=first.get("msg", "Invalid argument."),
         hint="Fix the argument and retry; see the tool's inputSchema for the allowed shape.",
         field_name=field,
-        value=first.get("input"),
+        value=_safe_reflected_value(first.get("type"), first.get("input")),
         details={"validation_type": first.get("type")},
     )
 

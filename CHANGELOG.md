@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Security hardening from the agent-friendliness review (two-model panel,
+Claude + Codex). PR implemented with Claude and reviewed by Codex.
+
+### Security
+
+- `invalid_argument` errors no longer reflect untrusted input values back to
+  the caller, closing a secret-leak path where an agent passing a credential
+  as an unknown argument (e.g. `{"api_token": "sk-..."}`) would have it echoed
+  into model context, transcripts, or client logs (#57). Unknown-field
+  (`extra_forbidden`) values and any string input are dropped (all tool inputs
+  are numeric/bool, so a string is never legitimate); only numeric/bool values
+  with genuine repair signal (e.g. `station_id=-5`) are still reflected. As
+  defense-in-depth, error values on sensitively-named fields are redacted.
+- Disk cache directory and files are now created with owner-only permissions
+  (`0700`/`0600`) and written atomically (temp file + `os.replace`), so cached
+  station coordinates and Wi-Fi SSIDs are not readable by other local users on
+  a multi-user host. Pre-existing loose permissions are migrated in place on
+  startup (#61).
+
 ## [0.9.0] - 2026-06-09
 
 Agent-friendliness remediations from an MCP contract audit of the 0.8.0
