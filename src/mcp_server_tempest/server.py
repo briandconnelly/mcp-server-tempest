@@ -383,9 +383,15 @@ def _strip_titles(obj: Any) -> None:
     ``tools/list``. Stripping them is the largest validation-safe lever for
     shrinking the tool catalog (see issue #69). Interpretive ``description``
     strings are deliberately left untouched.
+
+    Only the JSON Schema ``title`` *keyword* (a string annotation) is removed.
+    A model field literally named ``title`` appears as ``properties["title"]``
+    whose value is a schema (a dict), so guarding on ``str`` preserves it
+    instead of deleting the whole property.
     """
     if isinstance(obj, dict):
-        obj.pop("title", None)
+        if isinstance(obj.get("title"), str):
+            del obj["title"]
         for value in obj.values():
             _strip_titles(value)
     elif isinstance(obj, list):

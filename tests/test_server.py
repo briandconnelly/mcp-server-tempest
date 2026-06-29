@@ -1092,21 +1092,28 @@ class TestStripTitles:
             "properties": {
                 "a": {"title": "A", "type": "string", "description": "keep me"},
                 "b": {"type": "array", "items": {"title": "B", "type": "integer"}},
+                # A field literally named "title": the property must survive;
+                # only its own `title` *annotation* should be stripped.
+                "title": {"title": "Title", "type": "string"},
             },
             "$defs": {"Thing": {"title": "Thing", "type": "object"}},
         }
         _strip_titles(schema)
-        assert all("title" not in d for d in _walk_all_dicts(schema))
+        assert all(not isinstance(d.get("title"), str) for d in _walk_all_dicts(schema))
         assert schema["properties"]["a"]["description"] == "keep me"
         assert schema["properties"]["a"]["type"] == "string"
         assert schema["$defs"]["Thing"]["type"] == "object"
+        # The "title"-named property is preserved (its annotation is gone).
+        assert schema["properties"]["title"] == {"type": "string"}
 
     @pytest.mark.parametrize(
         "schema",
         [_FORECAST_SCHEMA, _OBSERVATION_SCHEMA, _STATIONS_SCHEMA, _STATION_SCHEMA],
     )
     def test_published_schemas_carry_no_titles(self, schema):
-        offenders = [d for d in _walk_all_dicts(schema) if "title" in d]
+        # A property literally named "title" would be a dict-valued key, not a
+        # string annotation — flag only the string-valued `title` keyword.
+        offenders = [d for d in _walk_all_dicts(schema) if isinstance(d.get("title"), str)]
         assert not offenders, f"{len(offenders)} title(s) leaked into output schema"
 
     def test_descriptions_survive_title_stripping(self):
