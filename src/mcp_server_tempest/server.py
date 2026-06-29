@@ -1304,6 +1304,8 @@ async def get_capabilities() -> ToolResult:
     upstream call.
 
     Errors:
+    - invalid_argument — an unknown argument was passed (this tool takes none);
+      omit it and retry
     - internal_error — server bug; report at
       https://github.com/briandconnelly/mcp-server-tempest/issues
 
