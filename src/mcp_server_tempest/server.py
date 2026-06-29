@@ -588,7 +588,10 @@ _CAPABILITY_CONTRACT: dict = {
         "Errors arrive as an isError tool result whose text content is a JSON "
         "object: {code, message, temporary, request_id} plus optional hint, "
         "field, value, next, retry_after_ms, details. Branch on `code` (see "
-        "error_codes); do not parse `message`."
+        "error_codes), not `message`; treat an unrecognized `code` as a generic "
+        "failure (codes are added additively). Optional fields are omitted when "
+        "absent: use `retry_after_ms` only when present as a non-negative number, "
+        "and treat `temporary: true` without it as 'retry with backoff'."
     ),
     "fingerprint_covers": (
         "version, wire tool names, input and output schemas, tool annotations "
