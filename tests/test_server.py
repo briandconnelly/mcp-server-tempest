@@ -1432,6 +1432,10 @@ class TestCapabilitiesTool:
         doc = get_capabilities.__doc__ or ""
         assert "Errors:" in doc
         assert "internal_error" in doc
+        # Reachable via the middleware Pydantic path: passing an unknown
+        # argument to this no-arg tool maps to invalid_argument, so the
+        # documented error contract must list it.
+        assert "invalid_argument" in doc
 
 
 # -- Tests for per-tool error code documentation --

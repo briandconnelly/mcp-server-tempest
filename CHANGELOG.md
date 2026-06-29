@@ -42,6 +42,14 @@ Claude + Codex). PR implemented with Claude and reviewed by Codex.
   to match what is actually hashed — tool descriptions/docstrings remain
   deliberately excluded (#60). This changes the fingerprint value once.
 
+### Fixed
+
+- `tempest_get_capabilities`'s documented error contract now lists
+  `invalid_argument`, which it can return when an unknown argument is passed
+  (the middleware maps the resulting validation failure to `invalid_argument`);
+  the docstring previously listed only `internal_error`. Documentation-only
+  fix — no behavior or fingerprint change.
+
 ## [0.9.0] - 2026-06-09
 
 Agent-friendliness remediations from an MCP contract audit of the 0.8.0
