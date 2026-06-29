@@ -25,6 +25,7 @@ from mcp_server_tempest.server import (
     _get_stations_data,
     _int_env,
     _relaxed_schema,
+    _strip_titles,
     cache,
     get_capabilities,
     get_forecast,
@@ -1061,6 +1062,67 @@ class TestRelaxedSchema:
         assert "created_epoch" not in st.get("required", [])
         assert "station_id" in st["required"]
         assert "name" in st["required"]
+
+
+# -- Tests for output schema title stripping (issue #69) --
+
+
+def _walk_all_dicts(node):
+    """Yield every dict in a JSON Schema tree."""
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _walk_all_dicts(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _walk_all_dicts(item)
+
+
+class TestStripTitles:
+    """Pydantic stamps a redundant ``title`` on every property and ``$defs``
+    entry; stripping them is the largest validation-safe reduction of the
+    published tool-catalog (issue #69). Validation-bearing keys and
+    interpretive ``description`` strings must survive untouched.
+    """
+
+    def test_strips_nested_titles_and_keeps_other_keys(self):
+        schema = {
+            "title": "Root",
+            "type": "object",
+            "properties": {
+                "a": {"title": "A", "type": "string", "description": "keep me"},
+                "b": {"type": "array", "items": {"title": "B", "type": "integer"}},
+                # A field literally named "title": the property must survive;
+                # only its own `title` *annotation* should be stripped.
+                "title": {"title": "Title", "type": "string"},
+            },
+            "$defs": {"Thing": {"title": "Thing", "type": "object"}},
+        }
+        _strip_titles(schema)
+        assert all(not isinstance(d.get("title"), str) for d in _walk_all_dicts(schema))
+        assert schema["properties"]["a"]["description"] == "keep me"
+        assert schema["properties"]["a"]["type"] == "string"
+        assert schema["$defs"]["Thing"]["type"] == "object"
+        # The "title"-named property is preserved (its annotation is gone).
+        assert schema["properties"]["title"] == {"type": "string"}
+
+    @pytest.mark.parametrize(
+        "schema",
+        [_FORECAST_SCHEMA, _OBSERVATION_SCHEMA, _STATIONS_SCHEMA, _STATION_SCHEMA],
+    )
+    def test_published_schemas_carry_no_titles(self, schema):
+        # A property literally named "title" would be a dict-valued key, not a
+        # string annotation — flag only the string-valued `title` keyword.
+        offenders = [d for d in _walk_all_dicts(schema) if isinstance(d.get("title"), str)]
+        assert not offenders, f"{len(offenders)} title(s) leaked into output schema"
+
+    def test_descriptions_survive_title_stripping(self):
+        # The lever is title-only: interpretive descriptions stay (issue #69
+        # non-goal — do not gut the descriptions).
+        cc = _FORECAST_SCHEMA["$defs"]["CurrentConditions"]["properties"]
+        assert cc["feels_like"]["description"]
+        assert "truncation_hint" in _FORECAST_SCHEMA["properties"]
+        assert _FORECAST_SCHEMA["properties"]["truncation_hint"]["description"]
 
 
 # -- Tests for output schema additionalProperties lockdown --

@@ -372,6 +372,33 @@ def _lock_additional_properties(obj: Any) -> None:
             _lock_additional_properties(item)
 
 
+def _strip_titles(obj: Any) -> None:
+    """Recursively delete every ``title`` annotation from a JSON Schema tree.
+
+    Pydantic emits a ``title`` on every property and ``$defs`` entry, each a
+    title-cased echo of the field/model name (``air_temperature`` ->
+    "Air Temperature", ``uv`` -> "Uv"). Titles carry no validation semantics
+    and add nothing an agent can't read off the field name, yet they account
+    for ~16% of the published output-schema bytes that clients pay for on
+    ``tools/list``. Stripping them is the largest validation-safe lever for
+    shrinking the tool catalog (see issue #69). Interpretive ``description``
+    strings are deliberately left untouched.
+
+    Only the JSON Schema ``title`` *keyword* (a string annotation) is removed.
+    A model field literally named ``title`` appears as ``properties["title"]``
+    whose value is a schema (a dict), so guarding on ``str`` preserves it
+    instead of deleting the whole property.
+    """
+    if isinstance(obj, dict):
+        if isinstance(obj.get("title"), str):
+            del obj["title"]
+        for value in obj.values():
+            _strip_titles(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            _strip_titles(item)
+
+
 def _relaxed_schema(
     model_class: type[BaseModel],
     optional_fields: dict[str, set[str]],
@@ -384,7 +411,8 @@ def _relaxed_schema(
             top-level object) to the set of field names that should be removed
             from that definition's ``required`` list.
 
-    Also locks every object schema with ``additionalProperties: false`` so
+    Strips redundant Pydantic ``title`` annotations (see :func:`_strip_titles`)
+    and locks every object schema with ``additionalProperties: false`` so
     clients can detect drift if a tool response sprouts a field that wasn't
     in the contract.
     """
@@ -402,6 +430,7 @@ def _relaxed_schema(
     for def_name, defn in schema.get("$defs", {}).items():
         _relax(defn, def_name)
 
+    _strip_titles(schema)
     _lock_additional_properties(schema)
 
     # Stamp the dialect at generation time (not only via the on_list_tools
