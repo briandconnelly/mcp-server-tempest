@@ -77,7 +77,12 @@ def test_annotation_change_moves_fingerprint():
     baseline = s._compute_fingerprint()
     mutated = s._registered_annotations()
     current = mutated["tempest_get_capabilities"] or {}
-    mutated["tempest_get_capabilities"] = {**current, "openWorldHint": True}
+    # Toggle the current value so the mutation is always a real change, even if
+    # the tool's default openWorldHint ever flips.
+    mutated["tempest_get_capabilities"] = {
+        **current,
+        "openWorldHint": not current.get("openWorldHint", False),
+    }
     with patch.object(s, "_registered_annotations", return_value=mutated):
         assert s._compute_fingerprint() != baseline
 
@@ -94,7 +99,9 @@ async def test_fingerprinted_annotations_match_list_tools():
         tools = await c.list_tools()
     live = {
         t.name: (
-            t.annotations.model_dump(exclude_none=True, mode="json") if t.annotations else None
+            t.annotations.model_dump(exclude_none=True, mode="json")
+            if t.annotations is not None
+            else None
         )
         for t in tools
     }
