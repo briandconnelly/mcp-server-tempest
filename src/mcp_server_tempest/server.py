@@ -372,6 +372,27 @@ def _lock_additional_properties(obj: Any) -> None:
             _lock_additional_properties(item)
 
 
+def _strip_titles(obj: Any) -> None:
+    """Recursively delete every ``title`` annotation from a JSON Schema tree.
+
+    Pydantic emits a ``title`` on every property and ``$defs`` entry, each a
+    title-cased echo of the field/model name (``air_temperature`` ->
+    "Air Temperature", ``uv`` -> "Uv"). Titles carry no validation semantics
+    and add nothing an agent can't read off the field name, yet they account
+    for ~16% of the published output-schema bytes that clients pay for on
+    ``tools/list``. Stripping them is the largest validation-safe lever for
+    shrinking the tool catalog (see issue #69). Interpretive ``description``
+    strings are deliberately left untouched.
+    """
+    if isinstance(obj, dict):
+        obj.pop("title", None)
+        for value in obj.values():
+            _strip_titles(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            _strip_titles(item)
+
+
 def _relaxed_schema(
     model_class: type[BaseModel],
     optional_fields: dict[str, set[str]],
@@ -402,6 +423,7 @@ def _relaxed_schema(
     for def_name, defn in schema.get("$defs", {}).items():
         _relax(defn, def_name)
 
+    _strip_titles(schema)
     _lock_additional_properties(schema)
 
     # Stamp the dialect at generation time (not only via the on_list_tools
