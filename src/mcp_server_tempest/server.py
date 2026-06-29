@@ -411,7 +411,8 @@ def _relaxed_schema(
             top-level object) to the set of field names that should be removed
             from that definition's ``required`` list.
 
-    Also locks every object schema with ``additionalProperties: false`` so
+    Strips redundant Pydantic ``title`` annotations (see :func:`_strip_titles`)
+    and locks every object schema with ``additionalProperties: false`` so
     clients can detect drift if a tool response sprouts a field that wasn't
     in the contract.
     """
