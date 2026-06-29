@@ -34,6 +34,13 @@ Claude + Codex). PR implemented with Claude and reviewed by Codex.
   service and return externally mutable data. It stays `false` on the static
   `tempest_get_capabilities`. This corrects the prior blanket `false`, which
   conflated a closed entity set with a closed interaction boundary (#58).
+- The capability fingerprint now hashes each tool's `annotations`
+  (`readOnlyHint`/`openWorldHint`/`title`), so a future annotation flip is
+  visible to a cached client; previously only names, schemas, error codes,
+  instructions, and the capability contract were covered. The
+  `fingerprint_covers` text and the server-instructions wording were tightened
+  to match what is actually hashed — tool descriptions/docstrings remain
+  deliberately excluded (#60). This changes the fingerprint value once.
 
 ## [0.9.0] - 2026-06-09
 
