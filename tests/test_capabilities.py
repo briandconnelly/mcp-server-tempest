@@ -68,6 +68,46 @@ def test_input_schema_change_moves_fingerprint():
         assert s._compute_fingerprint() != baseline
 
 
+def test_annotation_change_moves_fingerprint():
+    """F4: a tool-annotation flip (e.g. openWorldHint) must move the fingerprint
+    so a cached client can detect the changed interaction boundary without
+    re-walking the surface."""
+    from mcp_server_tempest import server as s
+
+    baseline = s._compute_fingerprint()
+    mutated = s._registered_annotations()
+    current = mutated["tempest_get_capabilities"] or {}
+    # Toggle the current value so the mutation is always a real change, even if
+    # the tool's default openWorldHint ever flips.
+    mutated["tempest_get_capabilities"] = {
+        **current,
+        "openWorldHint": not current.get("openWorldHint", False),
+    }
+    with patch.object(s, "_registered_annotations", return_value=mutated):
+        assert s._compute_fingerprint() != baseline
+
+
+async def test_fingerprinted_annotations_match_list_tools():
+    """_registered_annotations reads FastMCP's private local registry; this
+    guard compares it against the public (async) list_tools surface so a
+    FastMCP upgrade that changes annotation serialization fails loudly here
+    instead of silently fingerprinting the wrong contract."""
+    from mcp_server_tempest import server as s
+
+    hashed = s._registered_annotations()
+    async with fastmcp.Client(s.mcp) as c:
+        tools = await c.list_tools()
+    live = {
+        t.name: (
+            t.annotations.model_dump(exclude_none=True, mode="json")
+            if t.annotations is not None
+            else None
+        )
+        for t in tools
+    }
+    assert hashed == live
+
+
 async def test_fingerprinted_input_schemas_match_list_tools():
     """_registered_input_schemas reads FastMCP's private local registry; this
     guard compares it against the public (async) list_tools surface so a

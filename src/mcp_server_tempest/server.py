@@ -303,8 +303,9 @@ SERVER SURFACE: mcp-server-tempest@{version}. Read tempest://capabilities (or
 call tempest_get_capabilities if your client does not expose MCP resources)
 for the structured surface summary (scope, tools, error codes, fingerprint).
 Each tool result also carries the fingerprint in
-_meta["net.bconnelly.tempest/fetch"]; it changes on any tool/schema/
-error-code/instructions change.
+_meta["net.bconnelly.tempest/fetch"]; it changes on any tool-name, schema,
+annotation, error-code, instructions, or capability-contract change (tool
+descriptions are not hashed).
 
 TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
 `uvx`) speaks MCP over stdio.
@@ -561,9 +562,10 @@ _CAPABILITY_CONTRACT: dict = {
         "error_codes); do not parse `message`."
     ),
     "fingerprint_covers": (
-        "version, wire tool names, input and output schemas, error codes, "
-        "instructions, and this capability contract (scope, tool purposes, "
-        "error channel, latency)."
+        "version, wire tool names, input and output schemas, tool annotations "
+        "(readOnlyHint/openWorldHint/title), error codes, instructions, and "
+        "this capability contract (scope, tool purposes, error channel, "
+        "latency). Tool descriptions/docstrings are not hashed."
     ),
     "latency": (
         "Each tool makes at most one upstream WeatherFlow call with a 15s total "
@@ -590,49 +592,75 @@ _CAPABILITY_CONTRACT: dict = {
 }
 
 
-def _registered_input_schemas() -> dict[str, dict]:
-    """Input schemas for every registered tool, exactly as clients see them.
+def _local_tool_components() -> dict[str, Tool]:
+    """Registered Tool components keyed by wire name, from the local registry.
 
-    Deep-copies each registered tool's generated parameters and stamps the
-    JSON Schema dialect the same way TempestContractMiddleware.on_list_tools
-    does, so the fingerprint hashes the wire shape. Reads FastMCP's local
-    component registry synchronously — the public list_tools() API is async
-    and unusable at import time. Tests compare this output against
-    mcp.list_tools(), so a FastMCP upgrade that moves the registry fails
-    loudly instead of silently fingerprinting the wrong contract.
+    Reads FastMCP's private local component registry synchronously — the public
+    list_tools() API is async and unusable at import time. Raises if the
+    registry has moved (a FastMCP upgrade) or is empty, so the capability
+    fingerprint fails loudly instead of silently hashing the wrong contract.
     """
     try:
         components = mcp._local_provider._components  # noqa: SLF001
     except AttributeError as exc:
         raise RuntimeError(
             "FastMCP's local tool registry has moved; cannot compute the "
-            "capability fingerprint over input schemas. Update "
-            "_registered_input_schemas for this FastMCP version."
+            "capability fingerprint. Update _local_tool_components for this "
+            "FastMCP version."
         ) from exc
+    tools = {c.name: c for c in components.values() if isinstance(c, Tool)}
+    if not tools:
+        raise RuntimeError(
+            "FastMCP local tool registry is empty; cannot compute the capability fingerprint."
+        )
+    return tools
+
+
+def _registered_input_schemas() -> dict[str, dict]:
+    """Input schemas for every registered tool, exactly as clients see them.
+
+    Deep-copies each registered tool's generated parameters and stamps the
+    JSON Schema dialect the same way TempestContractMiddleware.on_list_tools
+    does, so the fingerprint hashes the wire shape. Tests compare this output
+    against mcp.list_tools() so registry drift fails loudly.
+    """
     schemas: dict[str, dict] = {}
-    for component in components.values():
-        if not isinstance(component, Tool):
-            continue
+    for name, component in _local_tool_components().items():
         params = copy.deepcopy(component.parameters)
         params.setdefault("$schema", JSON_SCHEMA_DIALECT)
-        schemas[component.name] = params
-    if not schemas:
-        raise RuntimeError(
-            "FastMCP local tool registry is empty; cannot compute the "
-            "capability fingerprint over input schemas."
-        )
+        schemas[name] = params
     return schemas
+
+
+def _registered_annotations() -> dict[str, dict | None]:
+    """Tool annotations (readOnlyHint/openWorldHint/title) for every registered
+    tool, in the wire shape clients see.
+
+    Folded into the fingerprint so an annotation flip — e.g. an openWorldHint
+    or readOnlyHint change — is visible to a cached client. Tests compare this
+    against mcp.list_tools() so a serialization change fails loudly.
+    """
+    return {
+        name: (
+            component.annotations.model_dump(exclude_none=True, mode="json")
+            if component.annotations is not None
+            else None
+        )
+        for name, component in _local_tool_components().items()
+    }
 
 
 def _compute_fingerprint() -> str:
     """Deterministic hash of the agent-visible authored surface.
 
-    Covers: package version, wire tool names, input and output schemas, error
-    codes, the instructions text, and the capability contract
-    (_CAPABILITY_CONTRACT — scope/negative-scope/tool purposes/error channel/
-    latency). Must be called after all tools are registered: tool names and
-    input schemas come from the live registry, so the resulting _FINGERPRINT
-    assignment sits at the end of this module.
+    Covers: package version, wire tool names, input and output schemas, tool
+    annotations (readOnlyHint/openWorldHint/title), error codes, the
+    instructions text, and the capability contract (_CAPABILITY_CONTRACT —
+    scope/negative-scope/tool purposes/error channel/latency). Tool
+    descriptions/docstrings are deliberately not hashed. Must be called after
+    all tools are registered: tool names, input schemas, and annotations come
+    from the live registry, so the resulting _FINGERPRINT assignment sits at
+    the end of this module.
     """
     input_schemas = _registered_input_schemas()
     surface = json.dumps(
@@ -640,6 +668,7 @@ def _compute_fingerprint() -> str:
             "version": _PKG_VERSION,
             "tools": sorted(input_schemas),
             "input_schemas": input_schemas,
+            "annotations": _registered_annotations(),
             "output_schemas": {
                 "stations": _STATIONS_SCHEMA,
                 "station": _STATION_SCHEMA,
