@@ -1002,12 +1002,13 @@ async def get_stations(
     devices, and capabilities. Admin/internal fields are excluded.
 
     Errors:
-    - auth_missing / auth_invalid / auth_forbidden — token not set, rejected,
-      or lacking access; see the error payload's hint
-    - rate_limited, upstream_unavailable (both temporary; retry, honoring
+    - auth_missing/auth_invalid/auth_forbidden — token not set, rejected,
+      or lacking access; see the error's hint
+    - rate_limited, upstream_unavailable (temporary; retry, honoring
       retry_after_ms when present)
-    - Full code catalog: tempest_get_capabilities (error_codes); each
-      error's `hint` field, when present, carries repair guidance
+    - Catalog: tempest_get_capabilities / tempest://capabilities
+      (error_codes, error_channel); hint, when present, carries repair
+      guidance
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
@@ -1050,12 +1051,13 @@ async def get_station_details(
 
     Errors:
     - station_not_found — invalid station_id; call tempest_get_stations
-    - auth_missing / auth_invalid / auth_forbidden — token not set, rejected,
-      or lacking access; see the error payload's hint
-    - rate_limited, upstream_unavailable (both temporary; retry, honoring
+    - auth_missing/auth_invalid/auth_forbidden — token not set, rejected,
+      or lacking access; see the error's hint
+    - rate_limited, upstream_unavailable (temporary; retry, honoring
       retry_after_ms when present)
-    - Full code catalog: tempest_get_capabilities (error_codes); each
-      error's `hint` field, when present, carries repair guidance
+    - Catalog: tempest_get_capabilities / tempest://capabilities
+      (error_codes, error_channel); hint, when present, carries repair
+      guidance
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
@@ -1144,12 +1146,13 @@ async def get_forecast(
 
     Errors:
     - station_not_found — invalid station_id; call tempest_get_stations
-    - auth_missing / auth_invalid / auth_forbidden — token not set, rejected,
-      or lacking access; see the error payload's hint
-    - rate_limited, upstream_unavailable (both temporary; retry, honoring
+    - auth_missing/auth_invalid/auth_forbidden — token not set, rejected,
+      or lacking access; see the error's hint
+    - rate_limited, upstream_unavailable (temporary; retry, honoring
       retry_after_ms when present)
-    - Full code catalog: tempest_get_capabilities (error_codes); each
-      error's `hint` field, when present, carries repair guidance
+    - Catalog: tempest_get_capabilities / tempest://capabilities
+      (error_codes, error_channel); hint, when present, carries repair
+      guidance
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
@@ -1269,12 +1272,13 @@ async def get_observation(
 
     Errors:
     - station_not_found — invalid station_id; call tempest_get_stations
-    - auth_missing / auth_invalid / auth_forbidden — token not set, rejected,
-      or lacking access; see the error payload's hint
-    - rate_limited, upstream_unavailable (both temporary; retry, honoring
+    - auth_missing/auth_invalid/auth_forbidden — token not set, rejected,
+      or lacking access; see the error's hint
+    - rate_limited, upstream_unavailable (temporary; retry, honoring
       retry_after_ms when present)
-    - Full code catalog: tempest_get_capabilities (error_codes); each
-      error's `hint` field, when present, carries repair guidance
+    - Catalog: tempest_get_capabilities / tempest://capabilities
+      (error_codes, error_channel); hint, when present, carries repair
+      guidance
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.

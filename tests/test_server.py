@@ -1525,14 +1525,19 @@ class TestToolErrorDocstrings:
         ErrorCode.RATE_LIMITED.value,
         ErrorCode.UPSTREAM_UNAVAILABLE.value,
     )
-    CATALOG_POINTER = "tempest_get_capabilities"
+    # Every catalog pointer must name the tool, the equivalent resource, and
+    # the envelope-contract field so both tool-only and resource-capable
+    # clients can find the full picture (flagged in PR #84 review — the
+    # first draft named only the tool).
+    CATALOG_POINTERS = ("tempest_get_capabilities", "tempest://capabilities", "error_channel")
 
     def test_get_stations_lists_codes(self):
         doc = get_stations.__doc__ or ""
         assert "Errors:" in doc
         for code in self.CRITICAL_CODES:
             assert code in doc, f"{code!r} missing from get_stations docstring"
-        assert self.CATALOG_POINTER in doc
+        for pointer in self.CATALOG_POINTERS:
+            assert pointer in doc, f"{pointer!r} missing from get_stations docstring"
         assert "station_not_found" not in doc, (
             "get_stations cannot return station_not_found — operation 'stations' "
             "is not in rest.py:_STATION_SCOPED"
@@ -1548,7 +1553,8 @@ class TestToolErrorDocstrings:
             assert "Errors:" in doc, f"{name} missing Errors: block"
             for code in self.CRITICAL_CODES:
                 assert code in doc, f"{code!r} missing from {name} docstring"
-            assert self.CATALOG_POINTER in doc
+            for pointer in self.CATALOG_POINTERS:
+                assert pointer in doc, f"{pointer!r} missing from {name} docstring"
             assert "station_not_found" in doc, (
                 f"{name} should document station_not_found (station-scoped)"
             )

@@ -48,7 +48,7 @@ Claude + Codex). PR implemented with Claude and reviewed by Codex.
   8-9 line `Errors:` block in each tool's docstring with the
   selection-critical codes plus a pointer to `tempest_get_capabilities` /
   `tempest://capabilities` for the full catalog. Serialized `tools/list`
-  size drops from 37,406 to 29,986 bytes (~20%) for the current 5 tools.
+  size drops from 37,406 to 29,958 bytes (~20%) for the current 5 tools.
   Changes the fingerprint value once (output schemas are hashed); tool
   docstrings are not, so the `Errors:` edit alone would not have (#77).
 

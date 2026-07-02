@@ -328,7 +328,7 @@ class ForecastResponse(BaseModel):
     longitude: float
     timezone: str = Field(description="IANA timezone identifier", examples=["America/Los_Angeles"])
     timezone_offset_minutes: int = Field(description="UTC offset in minutes")
-    units: Units = Field(description="Unit specifications for all measurements")
+    units: Units
     # Truncation transparency. Populated by the get_forecast tool, not the
     # upstream API; defaults keep `ForecastResponse(**raw_upstream)` working.
     truncated: bool = Field(
@@ -381,5 +381,5 @@ class ObservationResponse(BaseModel):
     elevation: float = Field(description="Elevation of the station in meters")
     is_public: bool
     timezone: str = Field(description="IANA timezone identifier", examples=["America/Los_Angeles"])
-    station_units: Units = Field(description="Unit specifications for all measurements")
+    station_units: Units
     status: APIStatus
