@@ -64,7 +64,7 @@ class TempestContractMiddleware(Middleware):
             rid = _new_request_id()
             wfe = _validation_error_to_weatherflow(exc)
             logger.warning("rid=%s code=%s field=%s", rid, wfe.code.value, wfe.field_name)
-            raise wfe.to_tool_error(rid) from exc
+            return wfe.to_tool_result(rid)
 
     async def on_list_tools(self, context: MiddlewareContext, call_next):
         tools = await call_next(context)

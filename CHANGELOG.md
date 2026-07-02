@@ -51,6 +51,16 @@ Claude + Codex). PR implemented with Claude and reviewed by Codex.
   size drops from 37,406 to 29,958 bytes (~20%) for the current 5 tools.
   Changes the fingerprint value once (output schemas are hashed); tool
   docstrings are not, so the `Errors:` edit alone would not have (#77).
+- Error results now carry the structured envelope in `structuredContent`
+  (in addition to the existing compact-JSON `content[0].text` mirror, kept
+  for older clients), instead of text-only. The pinned FastMCP version
+  (3.4.2) added a native `ToolResult.is_error` field that round-trips
+  through `CallToolResult` with both `isError` and `structuredContent`
+  set; errors are now returned from `_dispatch` and the argument-validation
+  middleware instead of raised as `ToolError`, so clients that treat
+  structured content as authoritative no longer need to special-case error
+  parsing. `_CAPABILITY_CONTRACT["error_channel"]` documents both carriers.
+  Changes the fingerprint value once (#78).
 
 ### Fixed
 

@@ -92,47 +92,60 @@ except PackageNotFoundError:
 _KNOWN_CODES: frozenset[str] = frozenset(c.value for c in ErrorCode)
 
 
-def _is_structured_tool_error(te: ToolError) -> bool:
-    """True iff the ToolError message is a JSON payload with a known code.
+def _parse_structured_tool_error(te: ToolError) -> dict[str, Any] | None:
+    """Return the parsed payload if the ToolError message is JSON with a
+    known code, else None.
 
-    `WeatherFlowError.to_tool_error` produces this exact shape; anything else
-    is unstructured and must not bypass _dispatch's wire-contract enforcement.
+    `WeatherFlowError.to_tool_result` no longer raises ToolError, so this is
+    a defensive parse for any ToolError a future helper or framework path
+    might still raise directly; anything else is unstructured and must not
+    bypass _dispatch's wire-contract enforcement.
     """
     if not te.args:
-        return False
+        return None
     try:
         payload = json.loads(te.args[0])
     except (TypeError, json.JSONDecodeError):
-        return False
-    return isinstance(payload, dict) and payload.get("code") in _KNOWN_CODES
+        return None
+    if isinstance(payload, dict) and payload.get("code") in _KNOWN_CODES:
+        return payload
+    return None
 
 
-async def _dispatch(work: Callable[[], Awaitable[T]]) -> T:
-    """Run a tool body. Convert WeatherFlowError → structured JSON ToolError;
-    pass through ToolErrors that already carry a structured payload; convert
-    everything else (including unstructured ToolErrors) → internal_error.
-    Always log with rid.
+async def _dispatch(work: Callable[[], Awaitable[ToolResult]]) -> ToolResult:
+    """Run a tool body. Convert WeatherFlowError → a ToolResult carrying the
+    structured envelope in both structuredContent and a content[0].text JSON
+    mirror; pass through ToolErrors that already carry a structured payload
+    the same way; convert everything else (including unstructured
+    ToolErrors) → internal_error. Always log with rid.
     """
     rid = _new_request_id()
     try:
         return await work()
     except WeatherFlowError as wfe:
         logger.warning("rid=%s code=%s msg=%s", rid, wfe.code.value, wfe.message)
-        raise wfe.to_tool_error(rid) from wfe
+        return wfe.to_tool_result(rid)
     except ToolError as te:
         # Pass through ONLY if already structured. Plain ToolError("text") from
         # a helper or future framework path would otherwise leak as unstructured
         # text and defeat the wire contract; wrap it as internal_error instead.
-        if _is_structured_tool_error(te):
-            logger.debug("rid=%s passing through pre-structured ToolError", rid)
-            raise
+        payload = _parse_structured_tool_error(te)
+        if payload is not None:
+            # Log the payload's own request_id (what the client actually
+            # sees), not the rid generated above for this dispatch — the
+            # payload was built by whatever raised the pre-structured error.
+            logger.debug(
+                "rid=%s passing through pre-structured ToolError",
+                payload.get("request_id", rid),
+            )
+            return ToolResult(content=te.args[0], structured_content=payload, is_error=True)
         logger.error("rid=%s caught unstructured ToolError: %r", rid, te.args)
         wfe = WeatherFlowError(
             code=ErrorCode.INTERNAL_ERROR,
             message="Unexpected server error.",
             hint=f"Check server logs for request_id={rid}.",
         )
-        raise wfe.to_tool_error(rid) from te
+        return wfe.to_tool_result(rid)
     except Exception as exc:
         logger.error("rid=%s unexpected: %s\n%s", rid, exc, traceback.format_exc())
         wfe = WeatherFlowError(
@@ -140,7 +153,7 @@ async def _dispatch(work: Callable[[], Awaitable[T]]) -> T:
             message="Unexpected server error.",
             hint=f"Check server logs for request_id={rid}.",
         )
-        raise wfe.to_tool_error(rid) from exc
+        return wfe.to_tool_result(rid)
 
 
 def _int_env(name: str, default: int) -> int:
@@ -585,13 +598,15 @@ _CAPABILITY_CONTRACT: dict = {
         },
     ],
     "error_channel": (
-        "Errors arrive as an isError tool result whose text content is a JSON "
-        "object: {code, message, temporary, request_id} plus optional hint, "
-        "field, value, next, retry_after_ms, details. Branch on `code` (see "
-        "error_codes), not `message`; treat an unrecognized `code` as a generic "
-        "failure (codes are added additively). Optional fields are omitted when "
-        "absent. `retry_after_ms` is always present when `temporary` is true — "
-        "a non-negative integer when the delay is known, else null (retry "
+        "Errors arrive as an isError tool result. The JSON envelope — {code, "
+        "message, temporary, request_id} plus optional hint, field, value, "
+        "next, retry_after_ms, details — is in `structuredContent`, with an "
+        "identical compact-JSON copy in `content[0].text` for clients that "
+        "only read text content. Branch on `code` (see error_codes), not "
+        "`message`; treat an unrecognized `code` as a generic failure (codes "
+        "are added additively). Optional fields are omitted when absent. "
+        "`retry_after_ms` is always present when `temporary` is true — a "
+        "non-negative integer when the delay is known, else null (retry "
         "with backoff); it is omitted when `temporary` is false, unless a "
         "caller explicitly sets one (no error path does today)."
     ),

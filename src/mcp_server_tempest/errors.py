@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from fastmcp.exceptions import ToolError
+from fastmcp.tools.base import ToolResult
 
 
 class ErrorCode(StrEnum):
@@ -82,7 +82,8 @@ class WeatherFlowError(Exception):
     """Internal exception type carrying a structured error payload.
 
     Raised by rest.py and helpers; converted to a JSON-bearing fastmcp
-    ToolError by server.py's _dispatch helper.
+    ToolResult (isError + structuredContent) by server.py's _dispatch
+    helper.
 
     Note: the attribute is `field_name` (not `field`) to avoid shadowing
     `dataclasses.field` used for `details`. The serialized JSON key is
@@ -139,11 +140,16 @@ class WeatherFlowError(Exception):
             out["details"] = self.details
         return out
 
-    def to_tool_error(self, request_id: str) -> ToolError:
-        """Serialize to a fastmcp ToolError carrying compact JSON.
-
-        FastMCP's transport sets isError: true on the wire automatically when
-        a tool raises ToolError; the JSON we put here lands in
-        content[0].text for every MCP client.
+    def to_tool_result(self, request_id: str) -> ToolResult:
+        """Serialize to a fastmcp ToolResult carrying the envelope twice:
+        as `structured_content` (a FastMCP 3.4.2+ ToolResult with `is_error`
+        round-trips through CallToolResult with both `isError` and
+        `structuredContent` set) and as compact JSON in `content[0].text`
+        for clients that only read text content.
         """
-        return ToolError(json.dumps(self.to_payload(request_id), separators=(",", ":")))
+        payload = self.to_payload(request_id)
+        return ToolResult(
+            content=json.dumps(payload, separators=(",", ":")),
+            structured_content=payload,
+            is_error=True,
+        )

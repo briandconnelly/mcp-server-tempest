@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from fastmcp.exceptions import ToolError
+from fastmcp.tools.base import ToolResult
 
 from mcp_server_tempest.errors import _TEMPORARY, ErrorCode, WeatherFlowError
 
@@ -202,25 +202,31 @@ def test_new_request_id_is_16_hex_chars():
     int(rid, 16)  # parses as hex
 
 
-class TestWeatherFlowErrorToolError:
-    def test_to_tool_error_is_tool_error(self):
+class TestWeatherFlowErrorToolResult:
+    def test_to_tool_result_is_tool_result(self):
         wfe = WeatherFlowError(code=ErrorCode.AUTH_INVALID, message="bad")
-        te = wfe.to_tool_error("rid")
-        assert isinstance(te, ToolError)
+        tr = wfe.to_tool_result("rid")
+        assert isinstance(tr, ToolResult)
+        assert tr.is_error is True
 
-    def test_to_tool_error_message_is_compact_json(self):
+    def test_to_tool_result_text_is_compact_json(self):
         # Use a space-free message so any space in the body must come from
         # the serializer — guards against someone flipping separators back
         # to defaults.
         wfe = WeatherFlowError(code=ErrorCode.AUTH_INVALID, message="bad")
-        body = wfe.to_tool_error("rid").args[0]
+        body = wfe.to_tool_result("rid").content[0].text
         # Byte-equality against a known-compact reference is the strict check.
         expected = json.dumps(wfe.to_payload("rid"), separators=(",", ":"))
         assert body == expected
         # And the body must be parseable back to the same payload.
         assert json.loads(body) == wfe.to_payload("rid")
 
-    def test_to_tool_error_round_trips_all_fields(self):
+    def test_to_tool_result_structured_content_matches_text(self):
+        wfe = WeatherFlowError(code=ErrorCode.AUTH_INVALID, message="bad")
+        tr = wfe.to_tool_result("rid")
+        assert tr.structured_content == json.loads(tr.content[0].text)
+
+    def test_to_tool_result_round_trips_all_fields(self):
         wfe = WeatherFlowError(
             code=ErrorCode.STATION_NOT_FOUND,
             message="no such station",
@@ -231,9 +237,11 @@ class TestWeatherFlowErrorToolError:
             retry_after_ms=None,
             details={"upstream_status": 404, "operation": "observation"},
         )
-        parsed = json.loads(wfe.to_tool_error("rid").args[0])
-        assert parsed["code"] == "station_not_found"
-        assert parsed["field"] == "station_id"
-        assert parsed["value"] == 99999
-        assert parsed["next"] == {"tool": "get_stations"}
-        assert parsed["details"]["operation"] == "observation"
+        tr = wfe.to_tool_result("rid")
+        assert tr.is_error is True
+        for parsed in (tr.structured_content, json.loads(tr.content[0].text)):
+            assert parsed["code"] == "station_not_found"
+            assert parsed["field"] == "station_id"
+            assert parsed["value"] == 99999
+            assert parsed["next"] == {"tool": "get_stations"}
+            assert parsed["details"]["operation"] == "observation"
