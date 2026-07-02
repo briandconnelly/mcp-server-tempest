@@ -49,6 +49,19 @@ Claude + Codex). PR implemented with Claude and reviewed by Codex.
   (the middleware maps the resulting validation failure to `invalid_argument`);
   the docstring previously listed only `internal_error`. Documentation-only
   fix — no behavior or fingerprint change.
+- `_CAPABILITY_CONTRACT["fingerprint_covers"]`, the server instructions, and
+  `_compute_fingerprint()`'s docstring now explain *why* tool-level
+  descriptions/docstrings are excluded from the capability fingerprint (so
+  selection-prose polish doesn't churn cached surfaces) and make explicit
+  that input-schema parameter descriptions ARE hashed. Documentation-only;
+  changes the fingerprint value once (#79).
+- `retry_after_ms` is now always present (as an integer or `null`) on error
+  payloads where `temporary` is `true`, instead of being omitted when no
+  delay was known. Previously agents had to branch on key presence to tell
+  "no known delay" apart from "field not applicable"; now the key is
+  reliably present whenever a retry is meaningful. Non-temporary errors
+  continue to omit the key. Additive change; updates the `error_channel`
+  capability-contract text and changes the fingerprint value once (#80).
 
 ## [0.9.0] - 2026-06-09
 

@@ -88,6 +88,32 @@ class TestWeatherFlowErrorPayload:
         )
         assert wfe.to_payload("rid")["retry_after_ms"] == 5000
 
+    def test_rate_limited_without_delay_carries_null_retry_after_ms(self):
+        wfe = WeatherFlowError(code=ErrorCode.RATE_LIMITED, message="slow down")
+        payload = wfe.to_payload("rid")
+        assert "retry_after_ms" in payload
+        assert payload["retry_after_ms"] is None
+
+    def test_upstream_unavailable_carries_null_retry_after_ms(self):
+        wfe = WeatherFlowError(code=ErrorCode.UPSTREAM_UNAVAILABLE, message="down")
+        payload = wfe.to_payload("rid")
+        assert "retry_after_ms" in payload
+        assert payload["retry_after_ms"] is None
+
+    def test_non_temporary_error_omits_retry_after_ms(self):
+        wfe = WeatherFlowError(code=ErrorCode.STATION_NOT_FOUND, message="no such station")
+        assert "retry_after_ms" not in wfe.to_payload("rid")
+
+    def test_non_temporary_error_with_explicit_value_is_not_dropped(self):
+        # No production code path sets retry_after_ms on a non-temporary
+        # error today, but to_payload must not silently discard one if set.
+        wfe = WeatherFlowError(
+            code=ErrorCode.STATION_NOT_FOUND,
+            message="no such station",
+            retry_after_ms=1000,
+        )
+        assert wfe.to_payload("rid")["retry_after_ms"] == 1000
+
     def test_value_zero_is_included(self):
         # 0 is a meaningful station_id-shaped value; must not be dropped
         wfe = WeatherFlowError(

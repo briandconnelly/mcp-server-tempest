@@ -590,8 +590,10 @@ _CAPABILITY_CONTRACT: dict = {
         "field, value, next, retry_after_ms, details. Branch on `code` (see "
         "error_codes), not `message`; treat an unrecognized `code` as a generic "
         "failure (codes are added additively). Optional fields are omitted when "
-        "absent: use `retry_after_ms` only when present as a non-negative number, "
-        "and treat `temporary: true` without it as 'retry with backoff'."
+        "absent. `retry_after_ms` is always present when `temporary` is true — "
+        "a non-negative integer when the delay is known, else null (retry "
+        "with backoff); it is omitted when `temporary` is false, unless a "
+        "caller explicitly sets one (no error path does today)."
     ),
     "fingerprint_covers": (
         "version, wire tool names, input and output schemas, tool annotations "

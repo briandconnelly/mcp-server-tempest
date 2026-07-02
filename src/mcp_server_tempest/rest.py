@@ -55,7 +55,7 @@ def _retry_after_ms(headers: Mapping[str, str] | None) -> int | None:
 
     Numeric-seconds form only (RFC 9110 §10.2.3 `delay-seconds`).
     HTTP-date form, negative values, and non-finite values (`inf`/`nan`)
-    return None — agents seeing `temporary: true` without `retry_after_ms`
+    return None — agents seeing `temporary: true` with `retry_after_ms: null`
     should treat it as 'retry with backoff' (see wire-contract policy
     in the spec).
     """

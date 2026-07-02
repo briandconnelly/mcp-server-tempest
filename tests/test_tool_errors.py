@@ -154,6 +154,20 @@ class TestRateLimitedBoundary:
         assert payload["temporary"] is True
         assert payload["retry_after_ms"] == 5000
 
+    async def test_429_without_retry_after_header_carries_null(self):
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            side_effect=WeatherFlowError(
+                code=ErrorCode.RATE_LIMITED,
+                message="slow down",
+                hint="wait",
+            ),
+        ):
+            payload = await _payload_from(lambda: get_forecast(station_id=12345))
+        assert payload["code"] == "rate_limited"
+        assert "retry_after_ms" in payload
+        assert payload["retry_after_ms"] is None
+
 
 class TestUpstreamUnavailableBoundary:
     async def test_503_is_temporary(self):
