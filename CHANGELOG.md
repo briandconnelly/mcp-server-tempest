@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-02
+
 Security hardening from the agent-friendliness review (two-model panel,
 Claude + Codex). PR implemented with Claude and reviewed by Codex.
 
