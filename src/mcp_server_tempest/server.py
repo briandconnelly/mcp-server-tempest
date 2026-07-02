@@ -131,7 +131,13 @@ async def _dispatch(work: Callable[[], Awaitable[ToolResult]]) -> ToolResult:
         # text and defeat the wire contract; wrap it as internal_error instead.
         payload = _parse_structured_tool_error(te)
         if payload is not None:
-            logger.debug("rid=%s passing through pre-structured ToolError", rid)
+            # Log the payload's own request_id (what the client actually
+            # sees), not the rid generated above for this dispatch — the
+            # payload was built by whatever raised the pre-structured error.
+            logger.debug(
+                "rid=%s passing through pre-structured ToolError",
+                payload.get("request_id", rid),
+            )
             return ToolResult(content=te.args[0], structured_content=payload, is_error=True)
         logger.error("rid=%s caught unstructured ToolError: %r", rid, te.args)
         wfe = WeatherFlowError(

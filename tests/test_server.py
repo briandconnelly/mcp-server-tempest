@@ -1696,11 +1696,13 @@ class TestDispatch:
     async def test_passes_through_successful_result(self):
         from mcp_server_tempest.server import _dispatch
 
+        expected = ToolResult(structured_content={"ok": True})
+
         async def work():
-            return {"ok": True}
+            return expected
 
         result = await _dispatch(work)
-        assert result == {"ok": True}
+        assert result is expected
 
     async def test_weatherflow_error_becomes_error_tool_result(self):
         from mcp_server_tempest.server import _dispatch
