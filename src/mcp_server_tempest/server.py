@@ -587,12 +587,13 @@ _CAPABILITY_CONTRACT: dict = {
     "error_channel": (
         "Errors arrive as an isError tool result whose text content is a JSON "
         "object: {code, message, temporary, request_id} plus optional hint, "
-        "field, value, next, details. Branch on `code` (see error_codes), not "
-        "`message`; treat an unrecognized `code` as a generic failure (codes "
-        "are added additively). Optional fields are omitted when absent. "
-        "`retry_after_ms` is always present when `temporary` is true — a "
-        "non-negative integer when the delay is known, else null (retry with "
-        "backoff); it is omitted when `temporary` is false."
+        "field, value, next, retry_after_ms, details. Branch on `code` (see "
+        "error_codes), not `message`; treat an unrecognized `code` as a generic "
+        "failure (codes are added additively). Optional fields are omitted when "
+        "absent. `retry_after_ms` is always present when `temporary` is true — "
+        "a non-negative integer when the delay is known, else null (retry "
+        "with backoff); it is omitted when `temporary` is false, unless a "
+        "caller explicitly sets one (no error path does today)."
     ),
     "fingerprint_covers": (
         "version, wire tool names, input and output schemas, tool annotations "
