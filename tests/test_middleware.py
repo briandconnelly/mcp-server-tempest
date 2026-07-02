@@ -36,6 +36,22 @@ async def test_negative_station_id_returns_structured_invalid_argument():
     assert payload["value"] == -5
     assert payload["temporary"] is False
     assert "request_id" in payload
+    # #78: the envelope must also be in structuredContent, not just text.
+    assert r.structured_content == payload
+
+
+async def test_negative_station_id_carries_structured_content_at_wire_level():
+    # Same case as above, but via the raw MCP protocol result (no FastMCP
+    # client-side parsing) to lock in that isError and structuredContent
+    # both survive on the wire (#78).
+    async with _client() as c:
+        raw = await c.call_tool_mcp("tempest_get_observation", {"station_id": -5})
+    assert raw.isError is True
+    assert raw.structuredContent is not None
+    text_payload = json.loads(raw.content[0].text)
+    assert raw.structuredContent == text_payload
+    assert text_payload["code"] == "invalid_argument"
+    assert text_payload["field"] == "station_id"
 
 
 async def test_unknown_argument_returns_structured_invalid_argument():
@@ -105,10 +121,15 @@ async def test_station_not_found_repair_references_prefixed_name():
             r = await c.call_tool(
                 "tempest_get_observation", {"station_id": 99999}, raise_on_error=False
             )
+    assert r.is_error
     payload = json.loads(r.content[0].text)
     assert payload["code"] == "station_not_found"
     assert payload["next"] == {"tool": "tempest_get_stations"}
     assert "tempest_get_stations" in payload["hint"]
+    assert payload["temporary"] is False
+    assert "request_id" in payload
+    # #78: the envelope must also be in structuredContent, not just text.
+    assert r.structured_content == payload
 
 
 async def test_every_tool_advertises_schema_dialect():

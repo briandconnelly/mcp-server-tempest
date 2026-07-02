@@ -2,9 +2,11 @@
 
 These exercise the public tool surface (get_stations, get_station_details,
 get_forecast, get_observation) and assert against the JSON payload that
-clients actually receive in ToolError.args[0]. Patches target
-`mcp_server_tempest.server.api_*` because server.py rebinds the import
-(see tests/test_server.py:324, 346, 447, 456, 569 for the convention).
+clients actually receive — carried in both `structured_content` and
+`content[0].text` on the returned (not raised) error ToolResult. Patches
+target `mcp_server_tempest.server.api_*` because server.py rebinds the
+import (see tests/test_server.py:324, 346, 447, 456, 569 for the
+convention).
 """
 
 import json
@@ -13,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import aiohttp
 import pytest
-from fastmcp.exceptions import ToolError
+from fastmcp.tools.base import ToolResult
 
 import mcp_server_tempest.server as server_module
 from mcp_server_tempest.errors import ErrorCode, WeatherFlowError
@@ -55,9 +57,12 @@ def _make_response_error(status: int, headers: dict[str, str] | None = None):
 
 
 async def _payload_from(coro_factory):
-    with pytest.raises(ToolError) as excinfo:
-        await coro_factory()
-    return json.loads(excinfo.value.args[0])
+    result = await coro_factory()
+    assert isinstance(result, ToolResult)
+    assert result.is_error is True
+    text_payload = json.loads(result.content[0].text)
+    assert result.structured_content == text_payload
+    return text_payload
 
 
 # -- Per-code "one happy invalid call" boundary tests --
@@ -235,9 +240,7 @@ async def test_every_tool_wraps_in_dispatch(tool_callable, kwargs, helper_name):
         raise ValueError("bare exception escaped")
 
     with patch(f"mcp_server_tempest.server.{helper_name}", new=boom):
-        with pytest.raises(ToolError) as excinfo:
-            await tool_callable(**kwargs)
-        payload = json.loads(excinfo.value.args[0])
+        payload = await _payload_from(lambda: tool_callable(**kwargs))
         assert payload["code"] == "internal_error", (
             f"{tool_callable.__name__} forgot _dispatch; got {payload!r}"
         )

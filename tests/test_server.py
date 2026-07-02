@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastmcp.exceptions import ToolError
+from fastmcp.tools.base import ToolResult
 
 import mcp_server_tempest.server as server_module
 from mcp_server_tempest.cache import DiskCache
@@ -218,6 +219,16 @@ def _structured(result):
     """Return the structured dict whether the tool returned a dict or a ToolResult."""
     sc = getattr(result, "structured_content", None)
     return sc if sc is not None else result
+
+
+def _error_payload(result):
+    """Assert `result` is an error ToolResult with a consistent envelope in
+    both carriers, and return the parsed payload."""
+    assert isinstance(result, ToolResult)
+    assert result.is_error is True
+    text_payload = json.loads(result.content[0].text)
+    assert result.structured_content == text_payload
+    return text_payload
 
 
 @pytest.fixture(autouse=True)
@@ -448,15 +459,11 @@ class TestTools:
             assert len(result["stations"]) == 1
 
     async def test_get_stations_error(self, mock_ctx):
-        with (
-            patch(
-                "mcp_server_tempest.server.api_get_stations",
-                side_effect=Exception("API down"),
-            ),
-            pytest.raises(ToolError) as excinfo,
+        with patch(
+            "mcp_server_tempest.server.api_get_stations",
+            side_effect=Exception("API down"),
         ):
-            await get_stations(ctx=mock_ctx)
-        payload = json.loads(excinfo.value.args[0])
+            payload = _error_payload(await get_stations(ctx=mock_ctx))
         assert payload["code"] == "internal_error"
         assert payload["temporary"] is False
         assert "API down" not in payload["message"]
@@ -483,15 +490,11 @@ class TestTools:
             assert result["station_id"] == 12345
 
     async def test_get_station_details_error(self, mock_ctx):
-        with (
-            patch(
-                "mcp_server_tempest.server.api_get_station_id",
-                side_effect=Exception("Not found"),
-            ),
-            pytest.raises(ToolError) as excinfo,
+        with patch(
+            "mcp_server_tempest.server.api_get_station_id",
+            side_effect=Exception("Not found"),
         ):
-            await get_station_details(station_id=99999, ctx=mock_ctx)
-        payload = json.loads(excinfo.value.args[0])
+            payload = _error_payload(await get_station_details(station_id=99999, ctx=mock_ctx))
         assert payload["code"] == "internal_error"
 
     async def test_get_forecast(self, mock_ctx):
@@ -503,15 +506,11 @@ class TestTools:
             assert result["location_name"] == "Seattle"
 
     async def test_get_forecast_error(self, mock_ctx):
-        with (
-            patch(
-                "mcp_server_tempest.server.api_get_forecast",
-                side_effect=Exception("Timeout"),
-            ),
-            pytest.raises(ToolError) as excinfo,
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            side_effect=Exception("Timeout"),
         ):
-            await get_forecast(station_id=12345, ctx=mock_ctx)
-        payload = json.loads(excinfo.value.args[0])
+            payload = _error_payload(await get_forecast(station_id=12345, ctx=mock_ctx))
         assert payload["code"] == "internal_error"
 
     async def test_get_observation(self, mock_ctx):
@@ -523,15 +522,11 @@ class TestTools:
             assert result["station_id"] == 12345
 
     async def test_get_observation_error(self, mock_ctx):
-        with (
-            patch(
-                "mcp_server_tempest.server.api_get_observation",
-                side_effect=Exception("Bad request"),
-            ),
-            pytest.raises(ToolError) as excinfo,
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            side_effect=Exception("Bad request"),
         ):
-            await get_observation(station_id=12345, ctx=mock_ctx)
-        payload = json.loads(excinfo.value.args[0])
+            payload = _error_payload(await get_observation(station_id=12345, ctx=mock_ctx))
         assert payload["code"] == "internal_error"
 
     async def test_forecast_notification_failure_does_not_fail_tool(self, mock_ctx):
@@ -1617,15 +1612,11 @@ class TestToolErrorPassthrough:
         # An unstructured ToolError raised inside the tool body must NOT
         # leak through — _dispatch wraps it as internal_error so the wire
         # contract holds for every error path.
-        with (
-            patch(
-                "mcp_server_tempest.server.api_get_stations",
-                side_effect=ToolError("plain prose error"),
-            ),
-            pytest.raises(ToolError) as excinfo,
+        with patch(
+            "mcp_server_tempest.server.api_get_stations",
+            side_effect=ToolError("plain prose error"),
         ):
-            await get_stations(ctx=mock_ctx)
-        payload = json.loads(excinfo.value.args[0])
+            payload = _error_payload(await get_stations(ctx=mock_ctx))
         assert payload["code"] == "internal_error"
         # The original prose must NOT leak into the structured payload.
         assert "plain prose error" not in payload["message"]
@@ -1633,11 +1624,9 @@ class TestToolErrorPassthrough:
 
     async def test_get_stations_no_token_preserves_message(self, mock_ctx):
         with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ToolError) as excinfo:
-                await get_stations(ctx=mock_ctx)
-            payload = json.loads(excinfo.value.args[0])
-            assert payload["code"] == "auth_missing"
-            assert "WEATHERFLOW_API_TOKEN" in payload["message"]
+            payload = _error_payload(await get_stations(ctx=mock_ctx))
+        assert payload["code"] == "auth_missing"
+        assert "WEATHERFLOW_API_TOKEN" in payload["message"]
 
 
 # -- Tests for disk cache integration in server --
@@ -1713,7 +1702,7 @@ class TestDispatch:
         result = await _dispatch(work)
         assert result == {"ok": True}
 
-    async def test_weatherflow_error_becomes_json_tool_error(self):
+    async def test_weatherflow_error_becomes_error_tool_result(self):
         from mcp_server_tempest.server import _dispatch
 
         async def work():
@@ -1723,9 +1712,7 @@ class TestDispatch:
                 hint="get a new one",
             )
 
-        with pytest.raises(ToolError) as excinfo:
-            await _dispatch(work)
-        payload = json.loads(excinfo.value.args[0])
+        payload = _error_payload(await _dispatch(work))
         assert payload["code"] == "auth_invalid"
         assert payload["message"] == "bad token"
         assert payload["hint"] == "get a new one"
@@ -1739,9 +1726,7 @@ class TestDispatch:
         async def work():
             raise ValueError("kaboom")
 
-        with pytest.raises(ToolError) as excinfo:
-            await _dispatch(work)
-        payload = json.loads(excinfo.value.args[0])
+        payload = _error_payload(await _dispatch(work))
         assert payload["code"] == "internal_error"
         # Original exception text MUST NOT leak into the message or hint
         assert "kaboom" not in payload["message"]
@@ -1750,24 +1735,22 @@ class TestDispatch:
         assert payload["request_id"] in payload["hint"]
 
     async def test_structured_tool_error_passes_through(self):
-        # If a helper has already produced a structured ToolError (e.g. via
-        # WeatherFlowError.to_tool_error), _dispatch must NOT re-wrap it —
-        # the original code/message/request_id are preserved verbatim.
+        # If a helper has already produced a structured ToolError, _dispatch
+        # must NOT re-wrap it — the original code/message/request_id are
+        # preserved verbatim, just carried as an error ToolResult instead of
+        # a raised exception.
         from mcp_server_tempest.server import _dispatch
 
-        original = WeatherFlowError(
+        original_payload = WeatherFlowError(
             code=ErrorCode.AUTH_INVALID,
             message="bad",
-        ).to_tool_error("preserved-rid")
+        ).to_payload("preserved-rid")
+        original = ToolError(json.dumps(original_payload, separators=(",", ":")))
 
         async def work():
             raise original
 
-        with pytest.raises(ToolError) as excinfo:
-            await _dispatch(work)
-        # Pass-through: same exception object, same JSON, same rid.
-        assert excinfo.value is original
-        payload = json.loads(excinfo.value.args[0])
+        payload = _error_payload(await _dispatch(work))
         assert payload["code"] == "auth_invalid"
         assert payload["request_id"] == "preserved-rid"
 
@@ -1780,9 +1763,7 @@ class TestDispatch:
         async def work():
             raise ToolError("naked text")
 
-        with pytest.raises(ToolError) as excinfo:
-            await _dispatch(work)
-        payload = json.loads(excinfo.value.args[0])
+        payload = _error_payload(await _dispatch(work))
         assert payload["code"] == "internal_error"
         assert "naked text" not in payload["message"]
         assert "naked text" not in payload.get("hint", "")
@@ -1795,9 +1776,7 @@ class TestDispatch:
         async def work():
             raise ToolError(json.dumps({"code": "NOT_OUR_CODE", "message": "x"}))
 
-        with pytest.raises(ToolError) as excinfo:
-            await _dispatch(work)
-        payload = json.loads(excinfo.value.args[0])
+        payload = _error_payload(await _dispatch(work))
         assert payload["code"] == "internal_error"
 
     async def test_distinct_request_ids(self):
@@ -1809,10 +1788,8 @@ class TestDispatch:
             async def work():
                 raise WeatherFlowError(code=ErrorCode.AUTH_INVALID, message="x")
 
-            try:
-                await _dispatch(work)
-            except ToolError as te:
-                rids.append(json.loads(te.args[0])["request_id"])
+            payload = _error_payload(await _dispatch(work))
+            rids.append(payload["request_id"])
         assert len(set(rids)) == 5
 
 
