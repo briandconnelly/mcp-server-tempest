@@ -1002,17 +1002,13 @@ async def get_stations(
     devices, and capabilities. Admin/internal fields are excluded.
 
     Errors:
-    - auth_missing — WEATHERFLOW_API_TOKEN env var not set
-    - auth_invalid — token rejected; regenerate at
-      https://tempestwx.com/settings/tokens
-    - auth_forbidden — token lacks access (scope or ownership)
-    - invalid_argument — a parameter was malformed (wrong type, out of range, or
-      unknown field); fix it and retry
-    - rate_limited (temporary; retry after retry_after_ms)
-    - upstream_unavailable (temporary; transient WeatherFlow outage)
-    - upstream_invalid_response — WeatherFlow returned something unparseable
-    - internal_error — server bug; report at
-      https://github.com/briandconnelly/mcp-server-tempest/issues
+    - auth_missing/auth_invalid/auth_forbidden — token not set, rejected,
+      or lacking access; see the error's hint
+    - rate_limited, upstream_unavailable (temporary; retry, honoring
+      retry_after_ms when present)
+    - Catalog: tempest_get_capabilities / tempest://capabilities
+      (error_codes, error_channel); hint, when present, carries repair
+      guidance
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
@@ -1054,18 +1050,14 @@ async def get_station_details(
     metadata. Rarely needed if the user only asked about weather.
 
     Errors:
-    - auth_missing — WEATHERFLOW_API_TOKEN env var not set
-    - auth_invalid — token rejected; regenerate at
-      https://tempestwx.com/settings/tokens
-    - auth_forbidden — token lacks access to this station; verify ownership
-    - invalid_argument — a parameter was malformed (wrong type, out of range, or
-      unknown field); fix it and retry
     - station_not_found — invalid station_id; call tempest_get_stations
-    - rate_limited (temporary; retry after retry_after_ms)
-    - upstream_unavailable (temporary; transient WeatherFlow outage)
-    - upstream_invalid_response — WeatherFlow returned something unparseable
-    - internal_error — server bug; report at
-      https://github.com/briandconnelly/mcp-server-tempest/issues
+    - auth_missing/auth_invalid/auth_forbidden — token not set, rejected,
+      or lacking access; see the error's hint
+    - rate_limited, upstream_unavailable (temporary; retry, honoring
+      retry_after_ms when present)
+    - Catalog: tempest_get_capabilities / tempest://capabilities
+      (error_codes, error_channel); hint, when present, carries repair
+      guidance
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
@@ -1153,18 +1145,14 @@ async def get_forecast(
     configured units — read 'units' in the response.
 
     Errors:
-    - auth_missing — WEATHERFLOW_API_TOKEN env var not set
-    - auth_invalid — token rejected; regenerate at
-      https://tempestwx.com/settings/tokens
-    - auth_forbidden — token lacks access to this station; verify ownership
-    - invalid_argument — a parameter was malformed (wrong type, out of range, or
-      unknown field); fix it and retry
     - station_not_found — invalid station_id; call tempest_get_stations
-    - rate_limited (temporary; retry after retry_after_ms)
-    - upstream_unavailable (temporary; transient WeatherFlow outage)
-    - upstream_invalid_response — WeatherFlow returned something unparseable
-    - internal_error — server bug; report at
-      https://github.com/briandconnelly/mcp-server-tempest/issues
+    - auth_missing/auth_invalid/auth_forbidden — token not set, rejected,
+      or lacking access; see the error's hint
+    - rate_limited, upstream_unavailable (temporary; retry, honoring
+      retry_after_ms when present)
+    - Catalog: tempest_get_capabilities / tempest://capabilities
+      (error_codes, error_channel); hint, when present, carries repair
+      guidance
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
@@ -1283,18 +1271,14 @@ async def get_observation(
     'station_units' in the response.
 
     Errors:
-    - auth_missing — WEATHERFLOW_API_TOKEN env var not set
-    - auth_invalid — token rejected; regenerate at
-      https://tempestwx.com/settings/tokens
-    - auth_forbidden — token lacks access to this station; verify ownership
-    - invalid_argument — a parameter was malformed (wrong type, out of range, or
-      unknown field); fix it and retry
     - station_not_found — invalid station_id; call tempest_get_stations
-    - rate_limited (temporary; retry after retry_after_ms)
-    - upstream_unavailable (temporary; transient WeatherFlow outage)
-    - upstream_invalid_response — WeatherFlow returned something unparseable
-    - internal_error — server bug; report at
-      https://github.com/briandconnelly/mcp-server-tempest/issues
+    - auth_missing/auth_invalid/auth_forbidden — token not set, rejected,
+      or lacking access; see the error's hint
+    - rate_limited, upstream_unavailable (temporary; retry, honoring
+      retry_after_ms when present)
+    - Catalog: tempest_get_capabilities / tempest://capabilities
+      (error_codes, error_channel); hint, when present, carries repair
+      guidance
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.

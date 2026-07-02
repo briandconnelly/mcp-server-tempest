@@ -41,6 +41,16 @@ Claude + Codex). PR implemented with Claude and reviewed by Codex.
   `fingerprint_covers` text and the server-instructions wording were tightened
   to match what is actually hashed — tool descriptions/docstrings remain
   deliberately excluded (#60). This changes the fingerprint value once.
+- Slimmed the `tools/list` discovery surface every client pays on connect:
+  pruned output-schema field descriptions in `models.py` that only echoed
+  their field name (units, timestamp semantics, None/omission semantics,
+  and disambiguating descriptions were kept), and replaced the repeated
+  8-9 line `Errors:` block in each tool's docstring with the
+  selection-critical codes plus a pointer to `tempest_get_capabilities` /
+  `tempest://capabilities` for the full catalog. Serialized `tools/list`
+  size drops from 37,406 to 29,958 bytes (~20%) for the current 5 tools.
+  Changes the fingerprint value once (output schemas are hashed); tool
+  docstrings are not, so the `Errors:` edit alone would not have (#77).
 
 ### Fixed
 

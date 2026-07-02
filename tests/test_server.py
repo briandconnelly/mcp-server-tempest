@@ -1504,25 +1504,40 @@ class TestCapabilitiesTool:
 
 
 class TestToolErrorDocstrings:
-    """Each tool's docstring must list the error codes it can return so an
-    agent can branch on `code` without invoking the tool to discover them.
+    """Each tool's docstring lists the selection/repair-critical error codes
+    plus a pointer to the full catalog (tempest_get_capabilities /
+    tempest://capabilities), rather than repeating every code in every
+    docstring (see #77).
 
-    The canonical code set is `errors.ErrorCode`. `station_not_found` is
-    only reachable from station-scoped operations (rest.py:_STATION_SCOPED),
-    so `get_stations` is the only tool that excludes it.
+    `station_not_found` is only reachable from station-scoped operations
+    (rest.py:_STATION_SCOPED), so `get_stations` is the only tool that
+    excludes it.
     """
 
-    # Sourced from the ErrorCode enum so a rename or removal in errors.py
-    # surfaces as a test failure here, not as a stale string literal.
-    SHARED_CODES = tuple(
-        code.value for code in ErrorCode if code is not ErrorCode.STATION_NOT_FOUND
+    # Sourced from the ErrorCode enum so a rename surfaces as a test failure
+    # here, not as a stale string literal. invalid_argument,
+    # upstream_invalid_response, and internal_error are deliberately not
+    # spelled out per-tool anymore — they're covered by the catalog pointer.
+    CRITICAL_CODES = (
+        ErrorCode.AUTH_MISSING.value,
+        ErrorCode.AUTH_INVALID.value,
+        ErrorCode.AUTH_FORBIDDEN.value,
+        ErrorCode.RATE_LIMITED.value,
+        ErrorCode.UPSTREAM_UNAVAILABLE.value,
     )
+    # Every catalog pointer must name the tool, the equivalent resource, and
+    # the envelope-contract field so both tool-only and resource-capable
+    # clients can find the full picture (flagged in PR #84 review — the
+    # first draft named only the tool).
+    CATALOG_POINTERS = ("tempest_get_capabilities", "tempest://capabilities", "error_channel")
 
     def test_get_stations_lists_codes(self):
         doc = get_stations.__doc__ or ""
         assert "Errors:" in doc
-        for code in self.SHARED_CODES:
+        for code in self.CRITICAL_CODES:
             assert code in doc, f"{code!r} missing from get_stations docstring"
+        for pointer in self.CATALOG_POINTERS:
+            assert pointer in doc, f"{pointer!r} missing from get_stations docstring"
         assert "station_not_found" not in doc, (
             "get_stations cannot return station_not_found — operation 'stations' "
             "is not in rest.py:_STATION_SCOPED"
@@ -1536,8 +1551,10 @@ class TestToolErrorDocstrings:
         ):
             doc = tool.__doc__ or ""
             assert "Errors:" in doc, f"{name} missing Errors: block"
-            for code in self.SHARED_CODES:
+            for code in self.CRITICAL_CODES:
                 assert code in doc, f"{code!r} missing from {name} docstring"
+            for pointer in self.CATALOG_POINTERS:
+                assert pointer in doc, f"{pointer!r} missing from {name} docstring"
             assert "station_not_found" in doc, (
                 f"{name} should document station_not_found (station-scoped)"
             )
