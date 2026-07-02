@@ -305,7 +305,7 @@ for the structured surface summary (scope, tools, error codes, fingerprint).
 Each tool result also carries the fingerprint in
 _meta["net.bconnelly.tempest/fetch"]; it changes on any tool-name, schema,
 annotation, error-code, instructions, or capability-contract change (tool
-descriptions are not hashed).
+descriptions are not hashed, so description-only edits do not move it).
 
 TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
 `uvx`) speaks MCP over stdio.
@@ -597,7 +597,11 @@ _CAPABILITY_CONTRACT: dict = {
         "version, wire tool names, input and output schemas, tool annotations "
         "(readOnlyHint/openWorldHint/title), error codes, instructions, and "
         "this capability contract (scope, tool purposes, error channel, "
-        "latency). Tool descriptions/docstrings are not hashed."
+        "latency). Tool-level descriptions/docstrings are deliberately not "
+        "hashed, so selection prose can be polished without invalidating "
+        "cached capability surfaces — a stable fingerprint therefore does "
+        "not guarantee tool-description stability. Parameter descriptions "
+        "embedded in input schemas are hashed."
     ),
     "latency": (
         "Each tool makes at most one upstream WeatherFlow call with a 15s total "
@@ -689,10 +693,12 @@ def _compute_fingerprint() -> str:
     annotations (readOnlyHint/openWorldHint/title), error codes, the
     instructions text, and the capability contract (_CAPABILITY_CONTRACT —
     scope/negative-scope/tool purposes/error channel/latency). Tool
-    descriptions/docstrings are deliberately not hashed. Must be called after
-    all tools are registered: tool names, input schemas, and annotations come
-    from the live registry, so the resulting _FINGERPRINT assignment sits at
-    the end of this module.
+    descriptions/docstrings are deliberately not hashed, so prose polish does
+    not churn the fingerprint; the cost is that description-only drift is
+    invisible to fingerprint-caching clients, which fingerprint_covers
+    discloses. Must be called after all tools are registered: tool names,
+    input schemas, and annotations come from the live registry, so the
+    resulting _FINGERPRINT assignment sits at the end of this module.
     """
     input_schemas = _registered_input_schemas()
     surface = json.dumps(
