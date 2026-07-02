@@ -120,7 +120,14 @@ class WeatherFlowError(Exception):
             out["field"] = self.field_name
         if self.next is not None:
             out["next"] = self.next
-        if self.retry_after_ms is not None:
+        if self.temporary:
+            # Always present when temporary: true — non-negative int when
+            # known, else None ("retry with backoff"); agents branch on the
+            # value, not on key presence.
+            out["retry_after_ms"] = self.retry_after_ms
+        elif self.retry_after_ms is not None:
+            # Defensive: never silently drop a set value on a non-temporary
+            # error, even though no code path sets one today.
             out["retry_after_ms"] = self.retry_after_ms
         # `value` is included whenever it was set explicitly. We only treat
         # `None` as "absent" — `0`, `""`, etc. are meaningful. A value on a
