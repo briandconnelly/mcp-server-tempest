@@ -7,11 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Agent-friendliness review findings F1–F3. Both defects were prose or a toggle
-promising behavior the code did not deliver, and neither was detectable from
-the fingerprint, since tool descriptions are deliberately excluded from it.
+Agent-friendliness review findings F1–F3 and F7. Both F1/F2 defects were prose
+or a toggle promising behavior the code did not deliver. Note that no
+fingerprint scheme could have caught them: the incorrect station description
+shipped in `c76b0ad`, before the fingerprint existed in `d602c1e`, so there was
+never a correct prior state for a change detector to compare against. A
+fingerprint detects change, not incorrectness. F7 below widens fingerprint
+coverage for a different and narrower reason — so that *later* changes to
+selection guidance invalidate a cached surface.
+
+### Changed
+
+- **Capability fingerprint contract version 2.** The fingerprint now hashes the
+  complete wire record of every tool (name, title, description, input schema,
+  output schema, annotations, `_meta`) exactly as `tools/list` returns it, plus
+  the complete record of every resource as `resources/list` returns it, plus a
+  new protocol contract. Version 1 enumerated fields by hand and omitted two
+  agent-visible surfaces entirely: tool descriptions — the primary input to
+  tool selection — and every resource record, so renaming or re-describing
+  `tempest://capabilities` moved nothing.
+
+  The prior rationale for excluding descriptions (avoiding fingerprint churn on
+  prose polish) mistook the fingerprint doing its job for a cost: a client
+  caching the surface must be told when the document it selects tools from
+  changes. Hashing whole records instead of a field list also means fields the
+  MCP types gain later are covered without anyone remembering to extend the
+  hash.
+
+  **This is a one-time cache invalidation for fingerprint-caching clients.**
+  Read the new `fingerprint_contract_version` (published in
+  `tempest://capabilities`, `tempest_get_capabilities`, and every result's
+  `_meta`) to distinguish "the surface changed" from "the surface is now
+  measured differently". The old fingerprint is deliberately not published in
+  parallel, since that would let a client reuse stale descriptions.
+
+- **Declared protocol target.** `_CAPABILITY_CONTRACT` gains a `protocol`
+  object distinguishing the authored/tested target (`2025-11-25`) from the full
+  set of revisions the server accepts, which is read from the SDK rather than
+  hardcoded so it cannot claim revisions the server would reject. The
+  per-session revision remains whatever `initialize` returned in
+  `InitializeResult.protocolVersion`, and that value is authoritative for the
+  session.
 
 ### Fixed
+
+- **`python -OO` no longer serves a catalog agents cannot select from.** Tool
+  descriptions come from docstrings, which `-OO` discards, so an optimized run
+  previously started normally and served all five tools with no description at
+  all — and reported a different fingerprint for identical code. The server now
+  refuses to start in that state rather than degrading silently. The missing
+  descriptions are deliberately not normalized away before hashing: absent
+  descriptions are a genuinely different agent-visible surface, and hiding the
+  difference would make the cache identity dishonest.
 
 - `tempest_get_stations` no longer claims to return sensor capabilities. The
   upstream `GET /stations` endpoint omits `capabilities` entirely (verified at

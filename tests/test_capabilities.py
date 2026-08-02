@@ -56,15 +56,22 @@ def test_capability_contract_is_fingerprinted():
         assert s._compute_fingerprint() != baseline
 
 
+def _mutated_tool_records(server, tool, **overrides):
+    """A copy of the wire tool records with one tool's fields overridden."""
+    records = server._wire_tool_records()
+    records[tool] = {**records[tool], **overrides}
+    return records
+
+
 def test_input_schema_change_moves_fingerprint():
     """An input-contract change (new constraint, renamed parameter, changed
     description) must move the fingerprint without requiring a version bump."""
     from mcp_server_tempest import server as s
 
     baseline = s._compute_fingerprint()
-    mutated = s._registered_input_schemas()
-    mutated["tempest_get_forecast"]["properties"]["hours"]["description"] = "changed"
-    with patch.object(s, "_registered_input_schemas", return_value=mutated):
+    records = s._wire_tool_records()
+    records["tempest_get_forecast"]["inputSchema"]["properties"]["hours"]["description"] = "changed"
+    with patch.object(s, "_wire_tool_records", return_value=records):
         assert s._compute_fingerprint() != baseline
 
 
@@ -75,50 +82,160 @@ def test_annotation_change_moves_fingerprint():
     from mcp_server_tempest import server as s
 
     baseline = s._compute_fingerprint()
-    mutated = s._registered_annotations()
-    current = mutated["tempest_get_capabilities"] or {}
+    records = s._wire_tool_records()
+    current = records["tempest_get_capabilities"].get("annotations") or {}
     # Toggle the current value so the mutation is always a real change, even if
     # the tool's default openWorldHint ever flips.
-    mutated["tempest_get_capabilities"] = {
-        **current,
-        "openWorldHint": not current.get("openWorldHint", False),
-    }
-    with patch.object(s, "_registered_annotations", return_value=mutated):
+    mutated = _mutated_tool_records(
+        s,
+        "tempest_get_capabilities",
+        annotations={**current, "openWorldHint": not current.get("openWorldHint", False)},
+    )
+    with patch.object(s, "_wire_tool_records", return_value=mutated):
         assert s._compute_fingerprint() != baseline
 
 
-async def test_fingerprinted_annotations_match_list_tools():
-    """_registered_annotations reads FastMCP's private local registry; this
-    guard compares it against the public (async) list_tools surface so a
-    FastMCP upgrade that changes annotation serialization fails loudly here
-    instead of silently fingerprinting the wrong contract."""
+def test_tool_description_change_moves_fingerprint():
+    """F7: tool descriptions are the primary input to tool selection, so a
+    description-only edit must move the fingerprint.
+
+    Contract version 1 excluded descriptions to avoid churn on prose polish.
+    That mistook the fingerprint doing its job for a cost: a client caching the
+    surface must be told when the document it selects tools from changes.
+    """
     from mcp_server_tempest import server as s
 
-    hashed = s._registered_annotations()
+    baseline = s._compute_fingerprint()
+    mutated = _mutated_tool_records(
+        s, "tempest_get_stations", description="Completely different selection guidance."
+    )
+    with patch.object(s, "_wire_tool_records", return_value=mutated):
+        assert s._compute_fingerprint() != baseline
+
+
+def test_tool_title_change_moves_fingerprint():
+    """Titles steer human-facing pickers, so they are agent-visible surface too."""
+    from mcp_server_tempest import server as s
+
+    baseline = s._compute_fingerprint()
+    mutated = _mutated_tool_records(s, "tempest_get_stations", title="Renamed In The Picker")
+    with patch.object(s, "_wire_tool_records", return_value=mutated):
+        assert s._compute_fingerprint() != baseline
+
+
+@pytest.mark.parametrize("field", ["name", "description", "mimeType"])
+def test_resource_record_change_moves_fingerprint(field):
+    """F7: the resource catalog is agent-visible surface. Contract version 1
+    hashed no resource record at all, so renaming or re-describing
+    tempest://capabilities was invisible to a fingerprint-caching client."""
+    from mcp_server_tempest import server as s
+
+    baseline = s._compute_fingerprint()
+    records = s._wire_resource_records()
+    uri = "tempest://capabilities"
+    records[uri] = {**records[uri], field: "changed"}
+    with patch.object(s, "_wire_resource_records", return_value=records):
+        assert s._compute_fingerprint() != baseline
+
+
+async def test_fingerprinted_tool_records_match_list_tools():
+    """_wire_tool_records reads FastMCP's private local registry; this guard
+    compares it byte-for-byte against the public (async) list_tools surface, so
+    a FastMCP upgrade that moves the registry or changes serialization fails
+    loudly here instead of silently fingerprinting the wrong contract."""
+    from mcp_server_tempest import server as s
+
+    hashed = s._wire_tool_records()
     async with fastmcp.Client(s.mcp) as c:
         tools = await c.list_tools()
+    live = {t.name: t.model_dump(exclude_none=True, mode="json", by_alias=True) for t in tools}
+    assert hashed == live
+
+
+async def test_fingerprinted_resource_records_match_list_resources():
+    """Same guard for the resource catalog."""
+    from mcp_server_tempest import server as s
+
+    hashed = s._wire_resource_records()
+    async with fastmcp.Client(s.mcp) as c:
+        resources = await c.list_resources()
     live = {
-        t.name: (
-            t.annotations.model_dump(exclude_none=True, mode="json")
-            if t.annotations is not None
-            else None
-        )
-        for t in tools
+        str(r.uri): r.model_dump(exclude_none=True, mode="json", by_alias=True) for r in resources
     }
     assert hashed == live
 
 
-async def test_fingerprinted_input_schemas_match_list_tools():
-    """_registered_input_schemas reads FastMCP's private local registry; this
-    guard compares it against the public (async) list_tools surface so a
-    FastMCP upgrade that moves the registry fails loudly here instead of
-    silently fingerprinting the wrong contract."""
+async def test_fingerprint_stable_across_list_tools():
+    """The middleware stamps $schema onto live component dicts when a client
+    calls tools/list. _wire_tool_records applies the same stamp, so the
+    fingerprint must not shift after the first list call — otherwise the
+    published _FINGERPRINT (computed at import) would disagree with a
+    recomputation."""
     from mcp_server_tempest import server as s
 
-    hashed = s._registered_input_schemas()
+    before = s._compute_fingerprint()
     async with fastmcp.Client(s.mcp) as c:
-        live = {t.name: t.inputSchema for t in await c.list_tools()}
-    assert hashed == live
+        await c.list_tools()
+    assert s._compute_fingerprint() == before == s._FINGERPRINT
+
+
+def test_missing_tool_description_is_refused():
+    """`python -OO` strips docstrings, so tool descriptions vanish and the
+    catalog becomes unselectable. Refuse rather than serve it, and never
+    substitute a placeholder — absent descriptions are a genuinely different
+    agent-visible surface."""
+    from mcp_server_tempest import server as s
+
+    stripped = _mutated_tool_records(s, "tempest_get_stations", description=None)
+    del stripped["tempest_get_stations"]["description"]
+    with pytest.raises(RuntimeError, match="missing descriptions"):
+        s._require_tool_descriptions(stripped)
+
+    # The real records pass.
+    s._require_tool_descriptions(s._wire_tool_records())
+
+
+def test_moved_registry_raises_diagnosable_error():
+    """Both record readers go through _local_components, so a FastMCP upgrade
+    that moves the private registry fails with one actionable message rather
+    than a bare AttributeError from whichever reader happened to run first."""
+    from mcp_server_tempest import server as s
+
+    class _Moved:
+        pass
+
+    with patch.object(s.mcp, "_local_provider", _Moved()):
+        for reader in (s._local_components, s._wire_tool_records, s._wire_resource_records):
+            with pytest.raises(RuntimeError, match="registry has moved"):
+                reader()
+
+
+def test_protocol_contract_is_published_and_fingerprinted():
+    """The authored target is distinct from what a session negotiates, and the
+    accepted set is read from the SDK so it cannot claim revisions the server
+    would reject."""
+    from mcp.server.session import SUPPORTED_PROTOCOL_VERSIONS
+
+    from mcp_server_tempest import server as s
+
+    protocol = s._build_capabilities()["protocol"]
+    assert protocol["authored_target"] == "2025-11-25"
+    assert protocol["accepted_revisions"] == sorted(SUPPORTED_PROTOCOL_VERSIONS)
+    assert protocol["authored_target"] in protocol["accepted_revisions"]
+
+    baseline = s._compute_fingerprint()
+    with patch.object(s, "_MCP_PROTOCOL", {**s._MCP_PROTOCOL, "authored_target": "2024-11-05"}):
+        assert s._compute_fingerprint() != baseline
+
+
+def test_fingerprint_contract_version_is_published():
+    """Clients need to tell 'the surface changed' from 'the surface is now
+    measured differently'."""
+    from mcp_server_tempest import server as s
+
+    payload = s._build_capabilities()
+    assert payload["fingerprint_contract_version"] == s._FINGERPRINT_CONTRACT_VERSION == 2
+    assert "fingerprint_contract_version" in payload["fingerprint_covers"]
 
 
 def test_fingerprint_is_deterministic_across_reload():
