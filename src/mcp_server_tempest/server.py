@@ -37,7 +37,6 @@ Example Usage:
     forecast = await client.call_tool("tempest_get_forecast", {"station_id": 12345})
 """
 
-import copy
 import hashlib
 import json
 import logging
@@ -55,7 +54,9 @@ from cachetools import TTLCache
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.tools.base import Tool, ToolResult
+from fastmcp.utilities.json_schema import dereference_refs
 from jsonschema import Draft202012Validator
+from mcp.server.session import SUPPORTED_PROTOCOL_VERSIONS
 from pydantic import BaseModel, Field
 
 from .cache import DiskCache
@@ -87,6 +88,34 @@ try:
     _PKG_VERSION = version("mcp-server-tempest")
 except PackageNotFoundError:
     _PKG_VERSION = "unknown"
+
+
+# Fingerprint contract version. Bumped when the *inputs* to the hash change,
+# so a client can tell "the surface changed" from "the server now measures the
+# surface differently". Version 2 hashes complete wire records (see
+# _compute_fingerprint); version 1 hashed a hand-enumerated field list that
+# omitted tool descriptions and every resource record.
+_FINGERPRINT_CONTRACT_VERSION = 2
+
+# The MCP revision this server is authored and tested against, distinct from
+# what any given session negotiates. `accepted_revisions` is read from the SDK
+# rather than hardcoded so it cannot drift from what the server will actually
+# accept: the session handler echoes the client's requested revision when it is
+# supported and otherwise falls back to the SDK's latest. A plain import, so an
+# SDK that moves this constant fails loudly at import instead of letting the
+# server publish a revision list it does not honor.
+_AUTHORED_PROTOCOL_TARGET = "2025-11-25"
+
+_MCP_PROTOCOL: dict = {
+    "authored_target": _AUTHORED_PROTOCOL_TARGET,
+    "accepted_revisions": sorted(SUPPORTED_PROTOCOL_VERSIONS),
+    "extensions": [],
+    "negotiated_value_is_authoritative": (
+        "The per-session revision is whatever `initialize` returned in "
+        "InitializeResult.protocolVersion; this object declares the authored "
+        "target and the full accepted set, not the active session's revision."
+    ),
+}
 
 
 _KNOWN_CODES: frozenset[str] = frozenset(c.value for c in ErrorCode)
@@ -207,7 +236,11 @@ _META_KEY = "net.bconnelly.tempest/fetch"
 
 
 def _meta_for(fetched: Fetched) -> dict:
-    fetch_meta: dict = {"cache": fetched.cache, "fingerprint": _FINGERPRINT}
+    fetch_meta: dict = {
+        "cache": fetched.cache,
+        "fingerprint": _FINGERPRINT,
+        "fingerprint_contract_version": _FINGERPRINT_CONTRACT_VERSION,
+    }
     iso = _iso(fetched.ts_epoch)
     if iso is not None:
         fetch_meta["ts_retrieved"] = iso
@@ -318,13 +351,24 @@ SERVER SURFACE: mcp-server-tempest@{version}. Read tempest://capabilities (or
 call tempest_get_capabilities if your client does not expose MCP resources)
 for the structured surface summary (scope, tools, error codes, fingerprint).
 Each tool result also carries the fingerprint in
-_meta["net.bconnelly.tempest/fetch"]; it changes on any tool-name, schema,
-annotation, error-code, instructions, or capability-contract change (tool
-descriptions are not hashed, so description-only edits do not move it).
+_meta["net.bconnelly.tempest/fetch"], beside fingerprint_contract_version.
+The fingerprint hashes the complete wire record of every tool and resource —
+descriptions included — plus error codes, instructions, the protocol
+contract, and the capability contract, so any change an agent could plan
+against moves it.
 
 TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
 `uvx`) speaks MCP over stdio.
-""".format(version=_PKG_VERSION)
+
+PROTOCOL: authored and tested against MCP {protocol_target}; the server also
+accepts {accepted_revisions}. The revision in force for your session is
+whatever `initialize` returned in InitializeResult.protocolVersion — that
+value, not this line, is authoritative for the active session.
+""".format(
+    version=_PKG_VERSION,
+    protocol_target=_AUTHORED_PROTOCOL_TARGET,
+    accepted_revisions=", ".join(sorted(SUPPORTED_PROTOCOL_VERSIONS)),
+)
 
 # Create the MCP server
 mcp = FastMCP(
@@ -610,6 +654,7 @@ _CAPABILITIES_OUTPUT_SCHEMA: dict = {
         "error_codes",
         "version",
         "fingerprint",
+        "fingerprint_contract_version",
     ],
     "properties": {
         "name": {"type": "string"},
@@ -631,6 +676,7 @@ _CAPABILITIES_OUTPUT_SCHEMA: dict = {
         "error_codes": {"type": "array", "items": {"type": "string"}},
         "version": {"type": "string"},
         "fingerprint": {"type": "string"},
+        "fingerprint_contract_version": {"type": "integer"},
     },
 }
 
@@ -696,15 +742,18 @@ _CAPABILITY_CONTRACT: dict = {
         "caller explicitly sets one (no error path does today)."
     ),
     "fingerprint_covers": (
-        "version, wire tool names, input and output schemas, tool annotations "
-        "(readOnlyHint/openWorldHint/title), error codes, instructions, and "
-        "this capability contract (scope, tool purposes, error channel, "
-        "latency). Tool-level descriptions/docstrings are deliberately not "
-        "hashed, so selection prose can be polished without invalidating "
-        "cached capability surfaces — a stable fingerprint therefore does "
-        "not guarantee tool-description stability. Parameter descriptions "
-        "embedded in input schemas are hashed."
+        "Everything an agent can plan against: version, the complete wire "
+        "record of every tool (name, title, description, input schema, output "
+        "schema, annotations, _meta) exactly as tools/list returns it, the "
+        "complete record of every resource as resources/list returns it, error "
+        "codes, instructions, the protocol contract, and this capability "
+        "contract. Because whole records are hashed rather than a field list, "
+        "fields the MCP types gain later are covered automatically. Read "
+        "fingerprint_contract_version alongside the fingerprint: it identifies "
+        "WHAT is hashed, so a change to it means the surface is measured "
+        "differently, not that the surface itself changed."
     ),
+    "protocol": _MCP_PROTOCOL,
     "latency": (
         "Each tool makes at most one upstream WeatherFlow call with a 15s total "
         "timeout; a breach returns upstream_unavailable (temporary). Cached "
@@ -722,10 +771,11 @@ _CAPABILITY_CONTRACT: dict = {
         "stations and station_details additionally use a disk cache "
         "(WEATHERFLOW_DISK_CACHE_TTL, default 86400s). Each fetching tool's "
         'result carries cache provenance under _meta["net.bconnelly.tempest/'
-        'fetch"]: {cache, fingerprint, ts_retrieved}; ts_retrieved is '
-        "included when the fetch time is known (it may be omitted on some "
-        "cache hits). tempest_get_capabilities is static — no upstream fetch "
-        "or cache — so its _meta carries only {fingerprint}."
+        'fetch"]: {cache, fingerprint, fingerprint_contract_version, '
+        "ts_retrieved}; ts_retrieved is included when the fetch time is known "
+        "(it may be omitted on some cache hits). tempest_get_capabilities is "
+        "static — no upstream fetch or cache — so its _meta carries only "
+        "{fingerprint, fingerprint_contract_version}."
     ),
 }
 
@@ -754,70 +804,140 @@ def _local_tool_components() -> dict[str, Tool]:
     return tools
 
 
-def _registered_input_schemas() -> dict[str, dict]:
-    """Input schemas for every registered tool, exactly as clients see them.
+def _to_wire_schema_form(record: dict) -> dict:
+    """Put a record's schemas into the exact form clients receive, in place.
 
-    Deep-copies each registered tool's generated parameters and stamps the
-    JSON Schema dialect the same way TempestContractMiddleware.on_list_tools
-    does, so the fingerprint hashes the wire shape. Tests compare this output
-    against mcp.list_tools() so registry drift fails loudly.
+    Two serve-time transforms stand between a registered component and the
+    wire, and the fingerprint is only honest if it hashes the far side of
+    both:
+
+    1. FastMCP's dereference middleware (on by default,
+       ``FastMCP(dereference_schemas=True)``) inlines every ``$ref`` so the
+       published schema is self-contained. ``to_mcp_tool()`` does not — it
+       still carries ``$defs``.
+    2. TempestContractMiddleware.on_list_tools stamps the JSON Schema dialect.
+       It mutates the live component dicts, so applying the same setdefault
+       here also keeps _compute_fingerprint() idempotent across the first
+       tools/call — otherwise the pre- and post-middleware hashes would
+       differ.
+
+    test_fingerprinted_tool_records_match_list_tools compares the result
+    byte-for-byte against list_tools(), so if a FastMCP upgrade moves either
+    transform this fails loudly instead of hashing a shape no client sees.
     """
-    schemas: dict[str, dict] = {}
-    for name, component in _local_tool_components().items():
-        params = copy.deepcopy(component.parameters)
-        params.setdefault("$schema", JSON_SCHEMA_DIALECT)
-        schemas[name] = params
-    return schemas
+    for key in ("inputSchema", "outputSchema"):
+        schema = record.get(key)
+        if isinstance(schema, dict):
+            schema = dereference_refs(schema)
+            schema.setdefault("$schema", JSON_SCHEMA_DIALECT)
+            record[key] = schema
+    return record
 
 
-def _registered_annotations() -> dict[str, dict | None]:
-    """Tool annotations (readOnlyHint/openWorldHint/title) for every registered
-    tool, in the wire shape clients see.
+def _wire_tool_records() -> dict[str, dict]:
+    """Complete `Tool` records for every registered tool, as clients receive
+    them from tools/list.
 
-    Folded into the fingerprint so an annotation flip — e.g. an openWorldHint
-    or readOnlyHint change — is visible to a cached client. Tests compare this
-    against mcp.list_tools() so a serialization change fails loudly.
+    Hashing the whole canonical record — rather than a hand-picked list of
+    fields — is what makes the fingerprint's coverage claim honest. It sweeps
+    in name, title, description, inputSchema, outputSchema, annotations, and
+    `_meta` together, and it keeps covering fields the MCP `Tool` type gains
+    later (icons, execution metadata) without anyone remembering to extend
+    this function. Contract version 1 enumerated fields by hand and silently
+    omitted tool descriptions, the primary input to tool selection.
+
+    Tests compare this against mcp.list_tools() so registry or serialization
+    drift fails loudly.
     """
     return {
-        name: (
-            component.annotations.model_dump(exclude_none=True, mode="json")
-            if component.annotations is not None
-            else None
+        name: _to_wire_schema_form(
+            component.to_mcp_tool().model_dump(exclude_none=True, mode="json", by_alias=True)
         )
         for name, component in _local_tool_components().items()
     }
 
 
+def _wire_resource_records() -> dict[str, dict]:
+    """Complete `Resource` records, keyed by URI, as clients receive them from
+    resources/list.
+
+    The resource catalog is agent-visible surface too: renaming
+    tempest://capabilities or rewriting its description changes what an agent
+    plans against. Contract version 1 hashed no resource record at all, so
+    either edit was invisible to a fingerprint-caching client.
+    """
+    records: dict[str, dict] = {}
+    for component in mcp._local_provider._components.values():  # noqa: SLF001
+        to_mcp_resource = getattr(component, "to_mcp_resource", None)
+        if to_mcp_resource is None:
+            continue
+        record = to_mcp_resource().model_dump(exclude_none=True, mode="json", by_alias=True)
+        records[str(record["uri"])] = record
+    return records
+
+
+def _require_tool_descriptions(records: dict[str, dict]) -> None:
+    """Refuse to publish a catalog whose tools have no descriptions.
+
+    Tool descriptions come from docstrings, which `python -OO` discards. An
+    -OO run therefore serves every tool with its primary selection guidance
+    missing — an agent choosing between five same-prefixed weather tools gets
+    names and schemas only. That is a worse failure than not starting, and it
+    is silent: the catalog still validates and the tools still work.
+
+    Never paper over it by substituting a placeholder or normalizing the
+    missing description away before hashing. Absent descriptions ARE a
+    different agent-visible surface, so a fingerprint that hid the difference
+    would be lying about what the client received.
+    """
+    undescribed = sorted(name for name, record in records.items() if not record.get("description"))
+    if undescribed:
+        raise RuntimeError(
+            "Tools are missing descriptions: "
+            f"{', '.join(undescribed)}. Tool descriptions come from docstrings; "
+            "running under `python -OO` strips them and would serve a catalog "
+            "agents cannot select from. Run without -OO."
+        )
+
+
 def _compute_fingerprint() -> str:
     """Deterministic hash of the agent-visible authored surface.
 
-    Covers: package version, wire tool names, input and output schemas, tool
-    annotations (readOnlyHint/openWorldHint/title), error codes, the
-    instructions text, and the capability contract (_CAPABILITY_CONTRACT —
-    scope/negative-scope/tool purposes/error channel/latency). Tool
-    descriptions/docstrings are deliberately not hashed, so prose polish does
-    not churn the fingerprint; the cost is that description-only drift is
-    invisible to fingerprint-caching clients, which fingerprint_covers
-    discloses. Must be called after all tools are registered: tool names,
-    input schemas, and annotations come from the live registry, so the
-    resulting _FINGERPRINT assignment sits at the end of this module.
+    Contract version 2 (see _FINGERPRINT_CONTRACT_VERSION). Hashes complete
+    wire records — every `Tool` record from tools/list and every `Resource`
+    record from resources/list — plus package version, error codes, the
+    instructions text, the MCP protocol contract, and _CAPABILITY_CONTRACT.
+    Hashing whole records rather than a hand-picked field list is what makes
+    the coverage claim honest: tool descriptions, titles, `_meta`, and the
+    resource catalog are all swept in, as is any field the MCP types gain
+    later.
+
+    Version 1 enumerated fields by hand and omitted tool descriptions (the
+    primary input to tool selection) and every resource record. It justified
+    the description exclusion as avoiding fingerprint churn on prose polish,
+    which mistook the fingerprint doing its job for a cost: a changed
+    selection document is exactly what a caching client must be told about.
+
+    Output schemas are no longer hashed separately — each rides inside its
+    tool's wire record, so the module-level _*_SCHEMA constants are covered
+    via the records rather than by name.
+
+    Must be called after all tools are registered: the records come from the
+    live registry, so the _FINGERPRINT assignment sits at the end of this
+    module.
     """
-    input_schemas = _registered_input_schemas()
+    tool_records = _wire_tool_records()
+    _require_tool_descriptions(tool_records)
     surface = json.dumps(
         {
+            "fingerprint_contract_version": _FINGERPRINT_CONTRACT_VERSION,
             "version": _PKG_VERSION,
-            "tools": sorted(input_schemas),
-            "input_schemas": input_schemas,
-            "annotations": _registered_annotations(),
-            "output_schemas": {
-                "stations": _STATIONS_SCHEMA,
-                "station": _STATION_SCHEMA,
-                "forecast": _FORECAST_SCHEMA,
-                "observation": _OBSERVATION_SCHEMA,
-                "capabilities": _CAPABILITIES_OUTPUT_SCHEMA,
-            },
+            "tools": sorted(tool_records),
+            "tool_records": tool_records,
+            "resource_records": _wire_resource_records(),
             "error_codes": sorted(c.value for c in ErrorCode),
             "instructions": _INSTRUCTIONS,
+            "protocol": _MCP_PROTOCOL,
             "capability_contract": _CAPABILITY_CONTRACT,
         },
         sort_keys=True,
@@ -869,6 +989,7 @@ def _build_capabilities() -> dict:
         **_CAPABILITY_CONTRACT,
         "version": _PKG_VERSION,
         "fingerprint": _FINGERPRINT,
+        "fingerprint_contract_version": _FINGERPRINT_CONTRACT_VERSION,
         "error_codes": sorted(c.value for c in ErrorCode),
     }
 
@@ -1453,7 +1574,12 @@ async def get_capabilities() -> ToolResult:
         return _validated(
             "capabilities",
             _build_capabilities(),
-            {_META_KEY: {"fingerprint": _FINGERPRINT}},
+            {
+                _META_KEY: {
+                    "fingerprint": _FINGERPRINT,
+                    "fingerprint_contract_version": _FINGERPRINT_CONTRACT_VERSION,
+                }
+            },
         )
 
     return await _dispatch(_work)
