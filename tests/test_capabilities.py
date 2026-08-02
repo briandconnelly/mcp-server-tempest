@@ -195,6 +195,21 @@ def test_missing_tool_description_is_refused():
     s._require_tool_descriptions(s._wire_tool_records())
 
 
+def test_moved_registry_raises_diagnosable_error():
+    """Both record readers go through _local_components, so a FastMCP upgrade
+    that moves the private registry fails with one actionable message rather
+    than a bare AttributeError from whichever reader happened to run first."""
+    from mcp_server_tempest import server as s
+
+    class _Moved:
+        pass
+
+    with patch.object(s.mcp, "_local_provider", _Moved()):
+        for reader in (s._local_components, s._wire_tool_records, s._wire_resource_records):
+            with pytest.raises(RuntimeError, match="registry has moved"):
+                reader()
+
+
 def test_protocol_contract_is_published_and_fingerprinted():
     """The authored target is distinct from what a session negotiates, and the
     accepted set is read from the SDK so it cannot claim revisions the server

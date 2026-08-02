@@ -53,6 +53,7 @@ from typing import Annotated, Any, Generic, Literal, TypeVar
 from cachetools import TTLCache
 from fastmcp import Context, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.resources import Resource
 from fastmcp.tools.base import Tool, ToolResult
 from fastmcp.utilities.json_schema import dereference_refs
 from jsonschema import Draft202012Validator
@@ -780,23 +781,31 @@ _CAPABILITY_CONTRACT: dict = {
 }
 
 
+def _local_components() -> dict:
+    """FastMCP's private local component registry.
+
+    Read synchronously — the public list_tools()/list_resources() APIs are
+    async and unusable at import time, where the fingerprint is computed.
+    Raises if the registry has moved (a FastMCP upgrade) so every caller fails
+    with one diagnosable message instead of a bare AttributeError.
+    """
+    try:
+        return mcp._local_provider._components  # noqa: SLF001
+    except AttributeError as exc:
+        raise RuntimeError(
+            "FastMCP's local component registry has moved; cannot compute the "
+            "capability fingerprint. Update _local_components for this "
+            "FastMCP version."
+        ) from exc
+
+
 def _local_tool_components() -> dict[str, Tool]:
     """Registered Tool components keyed by wire name, from the local registry.
 
-    Reads FastMCP's private local component registry synchronously — the public
-    list_tools() API is async and unusable at import time. Raises if the
-    registry has moved (a FastMCP upgrade) or is empty, so the capability
-    fingerprint fails loudly instead of silently hashing the wrong contract.
+    Raises if the registry is empty, so the capability fingerprint fails
+    loudly instead of silently hashing the wrong contract.
     """
-    try:
-        components = mcp._local_provider._components  # noqa: SLF001
-    except AttributeError as exc:
-        raise RuntimeError(
-            "FastMCP's local tool registry has moved; cannot compute the "
-            "capability fingerprint. Update _local_tool_components for this "
-            "FastMCP version."
-        ) from exc
-    tools = {c.name: c for c in components.values() if isinstance(c, Tool)}
+    tools = {c.name: c for c in _local_components().values() if isinstance(c, Tool)}
     if not tools:
         raise RuntimeError(
             "FastMCP local tool registry is empty; cannot compute the capability fingerprint."
@@ -818,7 +827,7 @@ def _to_wire_schema_form(record: dict) -> dict:
     2. TempestContractMiddleware.on_list_tools stamps the JSON Schema dialect.
        It mutates the live component dicts, so applying the same setdefault
        here also keeps _compute_fingerprint() idempotent across the first
-       tools/call — otherwise the pre- and post-middleware hashes would
+       tools/list — otherwise the pre- and post-middleware hashes would
        differ.
 
     test_fingerprinted_tool_records_match_list_tools compares the result
@@ -865,13 +874,21 @@ def _wire_resource_records() -> dict[str, dict]:
     tempest://capabilities or rewriting its description changes what an agent
     plans against. Contract version 1 hashed no resource record at all, so
     either edit was invisible to a fingerprint-caching client.
+
+    Selects by ``isinstance`` rather than probing for a ``to_mcp_resource``
+    attribute: a FastMCP upgrade that renamed that method would make an
+    attribute probe skip every resource and silently hash an empty catalog,
+    which is the exact coverage loss this function exists to close.
+    test_fingerprinted_resource_records_match_list_resources is the backstop
+    either way.
     """
     records: dict[str, dict] = {}
-    for component in mcp._local_provider._components.values():  # noqa: SLF001
-        to_mcp_resource = getattr(component, "to_mcp_resource", None)
-        if to_mcp_resource is None:
+    for component in _local_components().values():
+        if not isinstance(component, Resource):
             continue
-        record = to_mcp_resource().model_dump(exclude_none=True, mode="json", by_alias=True)
+        record = component.to_mcp_resource().model_dump(
+            exclude_none=True, mode="json", by_alias=True
+        )
         records[str(record["uri"])] = record
     return records
 
