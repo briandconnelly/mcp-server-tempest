@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Agent-friendliness review findings F1–F3. Both defects were prose or a toggle
+promising behavior the code did not deliver, and neither was detectable from
+the fingerprint, since tool descriptions are deliberately excluded from it.
+
+### Fixed
+
+- `tempest_get_stations` no longer claims to return sensor capabilities. The
+  upstream `GET /stations` endpoint omits `capabilities` entirely (verified at
+  the API boundary); only `GET /stations/{id}` returns it. Four agent-visible
+  surfaces asserted otherwise — the server `instructions`, the capability
+  contract, the tool description, and `manifest.json` — and the instructions
+  actively steered agents away from the one tool that answers "what can my
+  station measure". `tempest_get_station_details` is now documented as the
+  sole source of `capabilities`, and as otherwise redundant with the matching
+  `tempest_get_stations` entry (the two payloads are identical on every other
+  field). The station-list *schema* no longer advertises `capabilities`
+  either, and the response omits the key rather than emitting
+  `capabilities: null` — a null read as "this station reports no sensors",
+  and an output schema offering the field would have kept steering agents to
+  the wrong tool no matter what the prose said. `WeatherStation` keeps the
+  field, since `StationResponse` subclasses it and
+  `tempest_get_station_details` genuinely returns it; the omission is scoped
+  to the list schema, which also drops the now-orphaned `StationCapability`
+  definition (`tempest_get_stations` shrinks by 555 bytes on `tools/list`).
+- `tempest_get_forecast`'s `detailed` flag now changes field density only,
+  never entry count. Previously `detailed=True` with `hours`/`days` omitted
+  returned every available entry: 6 → 230 hourly and 2 → 10 daily on a live
+  station, a 76 KB response (~19k tokens) reported as `truncated: false`, with
+  hourly entry field count unchanged at 16. It also returned more hourly
+  entries than the `hours` maximum of 48 published in the tool's own input
+  schema. Entry counts now come from `hours`/`days` alone (default 6/2 in both
+  modes), so the schema's `<=48`/`<=10` bounds cap every response. The same
+  call now returns 3.4 KB.
+- Removed a contradiction inside `tempest_get_forecast`'s published input
+  schema, where `detailed` was documented as "controls density only" while
+  `hours` and `days` were documented as returning "all available in detailed
+  mode".
+
 ## [0.10.0] - 2026-07-02
 
 Security hardening from the agent-friendliness review (two-model panel,

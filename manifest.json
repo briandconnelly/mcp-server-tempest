@@ -89,11 +89,11 @@
   "tools": [
     {
       "name": "tempest_get_stations",
-      "description": "List the user's stations, devices, capabilities."
+      "description": "List the user's stations, locations, devices."
     },
     {
       "name": "tempest_get_station_details",
-      "description": "Deep config/hardware/location for one station."
+      "description": "Deep config/hardware/location for one station, plus the sensor capabilities the station list omits."
     },
     {
       "name": "tempest_get_observation",
