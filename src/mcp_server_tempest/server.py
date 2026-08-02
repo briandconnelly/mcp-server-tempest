@@ -281,16 +281,17 @@ TOOL SELECTION:
 NOTES:
 - Units follow each station's config — read 'station_units' / 'units' fields.
   Never assume °F vs °C or mph vs km/h.
-- tempest_get_stations already returns devices and capabilities — only call
-  tempest_get_station_details for the deeper per-station record.
+- tempest_get_stations returns devices but NOT sensor capabilities (upstream
+  omits them from the station list). For "what can my station measure",
+  call tempest_get_station_details(station_id) — it is the only tool that
+  returns the `capabilities` list.
 - tempest_get_forecast also returns a current snapshot, but tempest_get_observation is
   lighter for current-only questions.
-- tempest_get_forecast returns 6 hourly / 2 daily when hours/days are omitted;
-  explicit hours/days are honored as given in both modes. detailed=True
-  returns full field density and, when hours/days are omitted, all
-  available entries. The response carries `truncated`, `requested_*`,
-  `returned_*`, and `truncation_hint` so clients can detect an upstream
-  shortfall structurally.
+- tempest_get_forecast returns 6 hourly / 2 daily unless you pass hours/days.
+  Entry counts come from hours/days alone; detailed=True adds field density
+  (null fields, station coordinates) and never changes how many entries come
+  back. The response carries `truncated`, `requested_*`, `returned_*`, and
+  `truncation_hint` so clients can detect an upstream shortfall structurally.
 
 AMBIENT STATE (affects freshness and cache repair):
 - WEATHERFLOW_CACHE_TTL (default 300s) and WEATHERFLOW_CACHE_SIZE
@@ -575,11 +576,14 @@ _CAPABILITY_CONTRACT: dict = {
     "tools": [
         {
             "name": "tempest_get_stations",
-            "purpose": "List the user's stations, devices, capabilities.",
+            "purpose": "List the user's stations, locations, devices.",
         },
         {
             "name": "tempest_get_station_details",
-            "purpose": "Deep config/hardware/location for one station.",
+            "purpose": (
+                "Deep config/hardware/location for one station, plus the "
+                "sensor capabilities the station list omits."
+            ),
         },
         {
             "name": "tempest_get_observation",
@@ -1011,10 +1015,12 @@ async def get_stations(
     inventory questions without a follow-up call to tempest_get_station_details.
 
     Don't use for: current conditions (-> tempest_get_observation) or forecasts
-    (-> tempest_get_forecast).
+    (-> tempest_get_forecast). Also not for sensor capabilities ("what can my
+    station measure") — upstream leaves `capabilities` null in the station
+    list; use tempest_get_station_details(station_id) for that.
 
     Output: list of stations with id, name, location (lat, lon, timezone),
-    devices, and capabilities. Admin/internal fields are excluded.
+    and devices. Admin/internal fields are excluded.
 
     Errors:
     - auth_missing/auth_invalid/auth_forbidden — token not set, rejected,
@@ -1053,16 +1059,20 @@ async def get_station_details(
 ) -> ToolResult:
     """Get configuration, devices, hardware, and location for one specific station.
 
-    Use when: user asks about station hardware ("what devices does my station
-    have"), location ("where is my station", "elevation", "what's my
-    timezone"), or station-level metadata.
+    Use when: user asks what the station can measure ("does it track UV",
+    "what sensors does it have") — this is the only tool that returns the
+    `capabilities` list, which tempest_get_stations leaves null. Also for
+    station hardware, location ("where is my station", "elevation", "what's
+    my timezone"), or station-level metadata.
 
     Don't use for: weather data (-> tempest_get_observation, -> tempest_get_forecast).
 
     Workflow: requires station_id from tempest_get_stations.
 
-    Output: detailed station record — devices, sensor capabilities, location,
-    metadata. Rarely needed if the user only asked about weather.
+    Output: detailed station record — sensor capabilities, devices, location,
+    metadata. Apart from `capabilities`, this repeats the matching
+    tempest_get_stations entry; skip it if you already have that and don't
+    need capabilities.
 
     Errors:
     - station_not_found — invalid station_id; call tempest_get_stations
@@ -1106,8 +1116,7 @@ async def get_forecast(
             default=None,
             description=(
                 "Number of hourly forecasts to return. Omit for the default depth "
-                "(6 in summary mode, all available in detailed mode). Explicit "
-                "values are honored as given in both modes."
+                "of 6. Independent of `detailed`, which changes field density only."
             ),
             ge=1,
             le=48,
@@ -1119,8 +1128,7 @@ async def get_forecast(
             default=None,
             description=(
                 "Number of daily forecasts to return. Omit for the default depth "
-                "(2 in summary mode, all available in detailed mode). Explicit "
-                "values are honored as given in both modes."
+                "of 2. Independent of `detailed`, which changes field density only."
             ),
             ge=1,
             le=10,
@@ -1133,7 +1141,7 @@ async def get_forecast(
             description=(
                 "If true, return full field density (including null fields and "
                 "station coordinates). Default is a condensed summary. Controls "
-                "density only; entry counts follow hours/days."
+                "field density only — entry counts come from hours/days alone."
             ),
         ),
     ] = False,
@@ -1149,12 +1157,12 @@ async def get_forecast(
     this returns a much larger response. If you need both current AND
     future, this tool covers both in one call.
 
-    Workflow: requires station_id from tempest_get_stations. When hours/days are
-    omitted, summary mode returns 6 hourly / 2 daily and detailed mode returns
-    all available entries; explicit hours/days are honored as given in both
-    modes. `truncated` is true only when upstream supplied fewer entries than
-    you explicitly requested; `truncation_hint` then states the shortfall.
-    A plain call (no hours/days) is never reported as truncated.
+    Workflow: requires station_id from tempest_get_stations. Entry counts come
+    from hours/days alone (default 6 hourly / 2 daily when omitted); detailed
+    changes field density, not how many entries come back. `truncated` is true
+    only when upstream supplied fewer entries than you explicitly requested;
+    `truncation_hint` then states the shortfall. A plain call (no hours/days)
+    is never reported as truncated.
 
     Output: current snapshot + hourly + daily forecasts in the station's
     configured units — read 'units' in the response.
@@ -1180,18 +1188,20 @@ async def get_forecast(
         all_hourly = result["forecast"]["hourly"]
         all_daily = result["forecast"]["daily"]
 
-        # Entry counts: explicit hours/days are honored as given in both
-        # modes. Omitted values mean the mode default — 6/2 in summary mode,
-        # everything available in detailed mode. `detailed` controls field
-        # density only (exclude_none above, metadata pops below).
-        if hours is None:
-            result["forecast"]["hourly"] = all_hourly if detailed else all_hourly[:6]
-        else:
-            result["forecast"]["hourly"] = all_hourly[:hours]
-        if days is None:
-            result["forecast"]["daily"] = all_daily if detailed else all_daily[:2]
-        else:
-            result["forecast"]["daily"] = all_daily[:days]
+        # Entry counts depend on hours/days ONLY — never on `detailed`, which
+        # controls field density alone (exclude_none above, metadata pops
+        # below). Omitting an axis means the default depth (6 hourly / 2
+        # daily) in both modes.
+        #
+        # `detailed` used to also mean "all available entries" when hours/days
+        # were omitted, which made one boolean move row count 38x (6 -> 230
+        # hourly on a live station, a ~76 KB response) while leaving field
+        # density untouched. Worse, it returned more hourly entries than the
+        # `hours` maximum the input schema publishes. Row count is now the
+        # sole province of hours/days, whose schema bounds (<=48, <=10) cap
+        # the response for every caller.
+        result["forecast"]["hourly"] = all_hourly[: 6 if hours is None else hours]
+        result["forecast"]["daily"] = all_daily[: 2 if days is None else days]
         if not detailed:
             for key in ("latitude", "longitude", "timezone_offset_minutes"):
                 result.pop(key, None)

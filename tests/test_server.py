@@ -711,15 +711,71 @@ class TestForecastDepth:
             return_value=SAMPLE_FORECAST_DATA,
         ):
             result = _structured(await get_forecast(station_id=12345, detailed=True, ctx=mock_ctx))
-            # Detailed + omitted hours/days means "everything available".
-            # SAMPLE supplies 48 hourly / 10 daily.
-            assert len(result["forecast"]["hourly"]) == 48
-            assert len(result["forecast"]["daily"]) == 10
+            # Omitted hours/days means the default depth in BOTH modes.
+            # SAMPLE supplies 48 hourly / 10 daily; detailed must not widen it.
+            assert len(result["forecast"]["hourly"]) == 6
+            assert len(result["forecast"]["daily"]) == 2
             # Nothing was explicitly requested, so it is not truncated and
             # requested_* are omitted.
             assert result["truncated"] is False
             assert "requested_hours" not in result
             assert "requested_days" not in result
+
+    async def test_detail_toggle_changes_density_not_row_count(self, mock_ctx):
+        """`detailed` is orthogonal to entry count: same rows, more fields.
+
+        Regression guard for the toggle that used to move row count 38x on a
+        live station (6 -> 230 hourly, a ~76 KB response) while leaving field
+        density untouched.
+        """
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            summary = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
+            detailed = _structured(
+                await get_forecast(station_id=12345, detailed=True, ctx=mock_ctx)
+            )
+
+        for axis in ("hourly", "daily"):
+            assert len(summary["forecast"][axis]) == len(detailed["forecast"][axis]), (
+                f"{axis} row count must not depend on `detailed`"
+            )
+        # Density is the axis `detailed` may move, and concise fields stay a
+        # strict subset of detailed ones (no field renamed between modes).
+        assert set(summary["forecast"]["hourly"][0]) <= set(detailed["forecast"]["hourly"][0])
+        assert set(summary) <= set(detailed)
+
+    async def test_explicit_depth_identical_across_modes(self, mock_ctx):
+        """Explicit hours/days fully determine row count, in either mode."""
+        with patch(
+            "mcp_server_tempest.server.api_get_forecast",
+            return_value=SAMPLE_FORECAST_DATA,
+        ):
+            summary = _structured(
+                await get_forecast(station_id=12345, hours=12, days=4, ctx=mock_ctx)
+            )
+            detailed = _structured(
+                await get_forecast(station_id=12345, hours=12, days=4, detailed=True, ctx=mock_ctx)
+            )
+        assert len(summary["forecast"]["hourly"]) == len(detailed["forecast"]["hourly"]) == 12
+        assert len(summary["forecast"]["daily"]) == len(detailed["forecast"]["daily"]) == 4
+
+    async def test_entry_count_never_exceeds_schema_maximum(self, mock_ctx):
+        """No call may return more entries than the input schema's published
+        `hours`/`days` maxima (48/10) — detailed=True used to break this."""
+        wide = {
+            **SAMPLE_FORECAST_DATA,
+            "forecast": {
+                "hourly": [_make_hourly_forecast(h) for h in range(240)],
+                "daily": [_make_daily_forecast(d) for d in range(1, 11)],
+            },
+        }
+        with patch("mcp_server_tempest.server.api_get_forecast", return_value=wide):
+            for kwargs in ({}, {"detailed": True}, {"hours": 48, "days": 10, "detailed": True}):
+                result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx, **kwargs))
+                assert len(result["forecast"]["hourly"]) <= 48, kwargs
+                assert len(result["forecast"]["daily"]) <= 10, kwargs
 
     async def test_depth_exceeds_available(self, mock_ctx):
         with patch(
@@ -874,9 +930,8 @@ class TestForecastTruncationFields:
             assert "truncation_hint" not in result
 
     async def test_detailed_never_truncated(self, mock_ctx):
-        """detailed=True bypasses the summary caps. Combined with upstream
-        supplying enough entries (SAMPLE has 48 hourly / 10 daily), the
-        request is satisfied and truncated=False. See
+        """Explicit hours/days within what upstream supplies (SAMPLE has 48
+        hourly / 10 daily) is satisfied exactly, so truncated=False. See
         test_detailed_mode_upstream_shortfall for the shortfall case.
         """
         with patch(
