@@ -282,9 +282,10 @@ NOTES:
 - Units follow each station's config — read 'station_units' / 'units' fields.
   Never assume °F vs °C or mph vs km/h.
 - tempest_get_stations returns devices but NOT sensor capabilities (upstream
-  omits them from the station list). For "what can my station measure",
-  call tempest_get_station_details(station_id) — it is the only tool that
-  returns the `capabilities` list.
+  omits them from the station list, so the field is absent from its schema
+  and its responses). For "what can my station measure", call
+  tempest_get_station_details(station_id) — it is the only tool that returns
+  the `capabilities` list.
 - tempest_get_forecast also returns a current snapshot, but tempest_get_observation is
   lighter for current-only questions.
 - tempest_get_forecast returns 6 hourly / 2 daily unless you pass hours/days.
@@ -413,9 +414,61 @@ def _strip_titles(obj: Any) -> None:
             _strip_titles(item)
 
 
+def _refs_in(obj: Any) -> set[str]:
+    """Every ``#/$defs/<name>`` target referenced anywhere under ``obj``.
+
+    Descends into a ``$defs`` container's *members* only when ``obj`` is that
+    member — the top-level call is handed a root with ``$defs`` stripped, so
+    reachability starts from the schema proper rather than from every
+    definition trivially referencing itself.
+    """
+    found: set[str] = set()
+    if isinstance(obj, dict):
+        ref = obj.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            found.add(ref.removeprefix("#/$defs/"))
+        for key, value in obj.items():
+            if key != "$defs":
+                found |= _refs_in(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            found |= _refs_in(item)
+    return found
+
+
+def _prune_unreferenced_defs(schema: dict) -> None:
+    """Drop ``$defs`` entries nothing reaches, transitively.
+
+    Omitting a property (see ``omitted_fields`` below) can orphan the
+    definitions it alone referenced. Leaving them behind would publish a
+    sub-schema for data the tool cannot return — the same
+    schema-contradicts-behavior defect omission is meant to fix — and would
+    bill every client for the bytes on ``tools/list``.
+    """
+    defs = schema.get("$defs")
+    if not defs:
+        return
+
+    reachable = _refs_in({k: v for k, v in schema.items() if k != "$defs"})
+    frontier = set(reachable)
+    while frontier:
+        discovered: set[str] = set()
+        for name in frontier:
+            if name in defs:
+                discovered |= _refs_in(defs[name]) - reachable
+        reachable |= discovered
+        frontier = discovered
+
+    for name in set(defs) - reachable:
+        del defs[name]
+    if not defs:
+        del schema["$defs"]
+
+
 def _relaxed_schema(
     model_class: type[BaseModel],
     optional_fields: dict[str, set[str]],
+    omitted_fields: dict[str, set[str]] | None = None,
 ) -> dict:
     """Generate a JSON schema where only specified fields are made non-required.
 
@@ -424,6 +477,13 @@ def _relaxed_schema(
         optional_fields: Mapping of schema definition name (or "$root" for the
             top-level object) to the set of field names that should be removed
             from that definition's ``required`` list.
+        omitted_fields: Same mapping shape, but the named properties are
+            deleted from the schema outright rather than merely made optional.
+            Use this where a tool can *never* populate a field its model
+            declares, so the published contract does not advertise data the
+            handler always drops. The handler's ``exclude`` set must omit the
+            same fields, or the response fails output validation against the
+            locked (``additionalProperties: false``) schema.
 
     Strips redundant Pydantic ``title`` annotations (see :func:`_strip_titles`)
     and locks every object schema with ``additionalProperties: false`` so
@@ -437,13 +497,26 @@ def _relaxed_schema(
         if fields and "required" in obj:
             obj["required"] = [r for r in obj["required"] if r not in fields]
 
+    def _omit(obj: dict, name: str) -> None:
+        fields = (omitted_fields or {}).get(name, set())
+        if not fields:
+            return
+        properties = obj.get("properties", {})
+        for field_name in fields:
+            properties.pop(field_name, None)
+        if "required" in obj:
+            obj["required"] = [r for r in obj["required"] if r not in fields]
+
     # Top-level
     _relax(schema, "$root")
+    _omit(schema, "$root")
 
     # $defs
     for def_name, defn in schema.get("$defs", {}).items():
         _relax(defn, def_name)
+        _omit(defn, def_name)
 
+    _prune_unreferenced_defs(schema)
     _strip_titles(schema)
     _lock_additional_properties(schema)
 
@@ -455,6 +528,14 @@ def _relaxed_schema(
     return schema
 
 
+# `capabilities` is omitted outright rather than merely relaxed: upstream's
+# `GET /stations` never populates it (only `GET /stations/{id}` does), so
+# publishing it here would advertise data this tool cannot return and point
+# agents at the wrong tool for "what can my station measure". The
+# WeatherStation model keeps the field because StationResponse subclasses it
+# and tempest_get_station_details genuinely returns it. Dropping the property
+# orphans the StationCapability definition, which _prune_unreferenced_defs
+# then removes from this schema only.
 _STATIONS_SCHEMA = _relaxed_schema(
     StationsResponse,
     {
@@ -464,8 +545,8 @@ _STATIONS_SCHEMA = _relaxed_schema(
         },
         "StationMeta": {"share_with_wf", "share_with_wu"},
         "StationItem": {"station_item_id", "location_id", "location_item_id"},
-        "StationCapability": {"device_id", "agl", "show_precip_final"},
     },
+    omitted_fields={"WeatherStation": {"capabilities"}},
 )
 
 _STATION_SCHEMA = _relaxed_schema(
@@ -802,17 +883,19 @@ def capabilities() -> dict:
     return _build_capabilities()
 
 
+# `capabilities` is dropped wholesale here, matching its omission from
+# _STATIONS_SCHEMA. Upstream leaves it null on the station-list endpoint, so
+# emitting `capabilities: null` only invited agents to conclude the station
+# reports no sensors. tempest_get_station_details is the tool that returns it.
 _STATIONS_EXCLUDE: dict = {
     "stations": {
         "__all__": {
             "created_epoch": True,
             "last_modified_epoch": True,
+            "capabilities": True,
             "station_meta": {"share_with_wf", "share_with_wu"},
             "station_items": {
                 "__all__": {"station_item_id", "location_id", "location_item_id"},
-            },
-            "capabilities": {
-                "__all__": {"device_id", "agl", "show_precip_final"},
             },
         },
     },
@@ -1016,8 +1099,9 @@ async def get_stations(
 
     Don't use for: current conditions (-> tempest_get_observation) or forecasts
     (-> tempest_get_forecast). Also not for sensor capabilities ("what can my
-    station measure") — upstream leaves `capabilities` null in the station
-    list; use tempest_get_station_details(station_id) for that.
+    station measure") — upstream does not supply them for the station list, so
+    this tool does not return a `capabilities` field at all; call
+    tempest_get_station_details(station_id) for that.
 
     Output: list of stations with id, name, location (lat, lon, timezone),
     and devices. Admin/internal fields are excluded.

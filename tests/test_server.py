@@ -79,6 +79,15 @@ SAMPLE_STATION_DATA = {
 
 SAMPLE_SINGLE_STATION_DATA = SAMPLE_STATION_DATA["stations"][0]
 
+# Upstream supplies `capabilities` only on GET /stations/{id}, never on the
+# station list, so it is deliberately absent from SAMPLE_STATION_DATA above.
+# `device_id`/`agl`/`show_precip_final` are stripped on serialization.
+SAMPLE_STATION_CAPABILITY = {
+    "capability": "uv",
+    "device_id": 1,
+    "environment": "outdoor",
+}
+
 SAMPLE_UNITS = {
     "units_temp": "f",
     "units_wind": "mph",
@@ -1112,6 +1121,84 @@ class TestRelaxedSchema:
         assert "created_epoch" not in st.get("required", [])
         assert "station_id" in st["required"]
         assert "name" in st["required"]
+
+
+# -- Tests for the station-list / station-details capabilities split --
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestCapabilitiesFieldSplit:
+    """Upstream GET /stations never supplies `capabilities`; only
+    GET /stations/{id} does. The station-list surface must not advertise or
+    emit the field, and the details surface must keep it — otherwise the
+    schema contradicts the prose that routes agents between the two tools.
+    """
+
+    def test_station_list_schema_omits_capabilities(self):
+        station = _STATIONS_SCHEMA["$defs"]["WeatherStation"]
+        assert "capabilities" not in station["properties"], (
+            "tempest_get_stations must not advertise a field upstream never populates"
+        )
+        assert "capabilities" not in station.get("required", [])
+
+    def test_station_list_schema_prunes_orphaned_capability_def(self):
+        """Dropping the only reference to StationCapability must drop the
+        definition too, so tools/list carries no sub-schema for unreachable
+        data."""
+        assert "StationCapability" not in _STATIONS_SCHEMA.get("$defs", {})
+        assert "StationCapability" not in json.dumps(_STATIONS_SCHEMA)
+
+    def test_station_details_schema_keeps_capabilities(self):
+        """StationResponse subclasses WeatherStation, so the omission must be
+        scoped to the list schema and not leak into details."""
+        assert "capabilities" in _STATION_SCHEMA["properties"]
+        assert "StationCapability" in _STATION_SCHEMA["$defs"]
+
+    async def test_station_list_response_omits_capabilities(self, mock_ctx):
+        """The key must be absent, not merely null. Upstream omits it, so the
+        old `capabilities: null` read as 'this station reports no sensors'."""
+        with patch(
+            "mcp_server_tempest.server.api_get_stations",
+            return_value=SAMPLE_STATION_DATA,
+        ):
+            result = _structured(await get_stations(ctx=mock_ctx))
+        assert result["stations"]
+        for station in result["stations"]:
+            assert "capabilities" not in station
+
+    async def test_station_list_drops_capabilities_even_when_upstream_sends_them(self, mock_ctx):
+        """Defensive: if WeatherFlow ever starts populating the field on the
+        list endpoint, the response must still match the published schema
+        rather than fail output validation."""
+        with_caps = {
+            **SAMPLE_STATION_DATA,
+            "stations": [
+                {**SAMPLE_SINGLE_STATION_DATA, "capabilities": [SAMPLE_STATION_CAPABILITY]}
+            ],
+        }
+        with patch("mcp_server_tempest.server.api_get_stations", return_value=with_caps):
+            result = _structured(await get_stations(ctx=mock_ctx))
+        assert "capabilities" not in result["stations"][0]
+
+    async def test_station_details_response_keeps_capabilities(self, mock_ctx):
+        detailed = {**SAMPLE_SINGLE_STATION_DATA, "capabilities": [SAMPLE_STATION_CAPABILITY]}
+        with patch("mcp_server_tempest.server.api_get_station_id", return_value=detailed):
+            result = _structured(await get_station_details(station_id=12345, ctx=mock_ctx))
+        assert result["capabilities"] == [{"capability": "uv", "environment": "outdoor"}]
+
+    def test_prune_unreferenced_defs_keeps_transitively_reachable(self):
+        """Reachability is transitive: a def referenced only by another
+        reachable def must survive."""
+        schema = {
+            "properties": {"a": {"$ref": "#/$defs/A"}},
+            "$defs": {
+                "A": {"properties": {"b": {"$ref": "#/$defs/B"}}},
+                "B": {"type": "string"},
+                "Orphan": {"type": "string"},
+            },
+        }
+        server_module._prune_unreferenced_defs(schema)
+        assert set(schema["$defs"]) == {"A", "B"}
 
 
 # -- Tests for output schema title stripping (issue #69) --

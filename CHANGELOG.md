@@ -22,7 +22,15 @@ the fingerprint, since tool descriptions are deliberately excluded from it.
   station measure". `tempest_get_station_details` is now documented as the
   sole source of `capabilities`, and as otherwise redundant with the matching
   `tempest_get_stations` entry (the two payloads are identical on every other
-  field).
+  field). The station-list *schema* no longer advertises `capabilities`
+  either, and the response omits the key rather than emitting
+  `capabilities: null` — a null read as "this station reports no sensors",
+  and an output schema offering the field would have kept steering agents to
+  the wrong tool no matter what the prose said. `WeatherStation` keeps the
+  field, since `StationResponse` subclasses it and
+  `tempest_get_station_details` genuinely returns it; the omission is scoped
+  to the list schema, which also drops the now-orphaned `StationCapability`
+  definition (`tempest_get_stations` shrinks by 555 bytes on `tools/list`).
 - `tempest_get_forecast`'s `detailed` flag now changes field density only,
   never entry count. Previously `detailed=True` with `hours`/`days` omitted
   returned every available entry: 6 → 230 hourly and 2 → 10 daily on a live
