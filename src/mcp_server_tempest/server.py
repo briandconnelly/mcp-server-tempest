@@ -884,9 +884,11 @@ def capabilities() -> dict:
 
 
 # `capabilities` is dropped wholesale here, matching its omission from
-# _STATIONS_SCHEMA. Upstream leaves it null on the station-list endpoint, so
-# emitting `capabilities: null` only invited agents to conclude the station
-# reports no sensors. tempest_get_station_details is the tool that returns it.
+# _STATIONS_SCHEMA. Upstream's station-list payload carries no `capabilities`
+# key at all; the model's `None` default materialized one, which we then
+# serialized as `capabilities: null` — a value that reads as "this station
+# reports no sensors" rather than "ask tempest_get_station_details", the tool
+# that actually returns it.
 _STATIONS_EXCLUDE: dict = {
     "stations": {
         "__all__": {
@@ -1145,9 +1147,9 @@ async def get_station_details(
 
     Use when: user asks what the station can measure ("does it track UV",
     "what sensors does it have") — this is the only tool that returns the
-    `capabilities` list, which tempest_get_stations leaves null. Also for
-    station hardware, location ("where is my station", "elevation", "what's
-    my timezone"), or station-level metadata.
+    `capabilities` list; tempest_get_stations does not return it at all.
+    Also for station hardware, location ("where is my station", "elevation",
+    "what's my timezone"), or station-level metadata.
 
     Don't use for: weather data (-> tempest_get_observation, -> tempest_get_forecast).
 
