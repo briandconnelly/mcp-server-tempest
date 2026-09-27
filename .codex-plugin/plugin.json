@@ -1,0 +1,25 @@
+{
+  "name": "tempest",
+  "version": "0.11.0",
+  "description": "MCP server for accessing WeatherFlow Tempest personal weather station data",
+  "author": {
+    "name": "Brian Connelly",
+    "url": "https://github.com/briandconnelly"
+  },
+  "repository": "https://github.com/briandconnelly/mcp-server-tempest",
+  "license": "MIT",
+  "keywords": ["weather", "tempest", "weatherflow", "mcp"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Tempest",
+    "shortDescription": "Access WeatherFlow Tempest station data.",
+    "longDescription": "Tempest provides Codex with an MCP server and reporting skill for WeatherFlow Tempest personal weather station data.",
+    "developerName": "Brian Connelly",
+    "category": "Utilities",
+    "capabilities": ["MCP", "Skills"],
+    "defaultPrompt": [
+      "Summarize my Tempest weather."
+    ]
+  }
+}

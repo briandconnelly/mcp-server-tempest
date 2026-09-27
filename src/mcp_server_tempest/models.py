@@ -3,6 +3,28 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+_CARDINAL_POINTS = (
+    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+)  # fmt: skip
+
+
+def _rfc3339(epoch: int | None) -> str | None:
+    """RFC3339 UTC form of a Unix epoch-seconds timestamp."""
+    if epoch is None:
+        return None
+    return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
+
+
+def _cardinal(degrees: float) -> str:
+    """16-point compass direction for a bearing in degrees, matching the
+    forecast's upstream `wind_direction_cardinal`. Sectors are 22.5° wide,
+    centered on each point, and half-open: N is [348.75, 11.25), so exactly
+    11.25° is NNE."""
+    # Round half up, not round()'s half-to-even, so every sector boundary
+    # resolves clockwise the same way.
+    return _CARDINAL_POINTS[int((degrees % 360) / 22.5 + 0.5) % 16]
+
 
 # Enums for better type safety
 class DeviceType(str, Enum):
@@ -105,7 +127,11 @@ class Location(BaseModel):
     longitude: float
     timezone: str = Field(description="IANA timezone identifier", examples=["America/Los_Angeles"])
     timezone_offset_minutes: int = Field(
-        description="UTC offset in minutes (negative for west of UTC)"
+        description=(
+            "UTC offset in minutes (negative for west of UTC) in effect when "
+            "this data was fetched; it changes across daylight-saving "
+            "transitions. Use the IANA `timezone` for time calculations."
+        )
     )
 
 
@@ -180,7 +206,11 @@ class WeatherStation(BaseModel):
     longitude: float
     timezone: str = Field(description="IANA timezone identifier", examples=["America/Los_Angeles"])
     timezone_offset_minutes: int = Field(
-        description="UTC offset in minutes (negative for west of UTC)"
+        description=(
+            "UTC offset in minutes (negative for west of UTC) in effect when "
+            "this data was fetched; it changes across daylight-saving "
+            "transitions. Use the IANA `timezone` for time calculations."
+        )
     )
     created_epoch: int = Field(description="Unix timestamp when the station was created")
     last_modified_epoch: int = Field(description="Unix timestamp of last station modification")
@@ -208,6 +238,21 @@ class DailyForecast(BaseModel):
     sunrise: int = Field(description="Unix timestamp for sunrise")
     sunset: int = Field(description="Unix timestamp for sunset")
 
+    @computed_field(description="RFC3339 UTC form of `day_start_local` (local midnight).")
+    @property
+    def day_start_at(self) -> str:
+        return datetime.fromtimestamp(self.day_start_local, tz=UTC).isoformat()
+
+    @computed_field(description="RFC3339 UTC form of `sunrise`.")
+    @property
+    def sunrise_at(self) -> str:
+        return datetime.fromtimestamp(self.sunrise, tz=UTC).isoformat()
+
+    @computed_field(description="RFC3339 UTC form of `sunset`.")
+    @property
+    def sunset_at(self) -> str:
+        return datetime.fromtimestamp(self.sunset, tz=UTC).isoformat()
+
 
 class HourlyForecast(BaseModel):
     """Hourly weather forecast"""
@@ -229,6 +274,11 @@ class HourlyForecast(BaseModel):
     icon: str
     feels_like: float = Field(description="Apparent temperature")
     uv: float = Field(ge=0)
+
+    @computed_field(description="RFC3339 UTC form of `time` (start of the forecast hour).")
+    @property
+    def starts_at(self) -> str:
+        return datetime.fromtimestamp(self.time, tz=UTC).isoformat()
 
 
 class CurrentConditions(BaseModel):
@@ -263,6 +313,21 @@ class CurrentConditions(BaseModel):
     precip_accum_last_1hr: float | None = None
     precip_accum_local_day: float | None = None
     precip_accum_local_yesterday: float | None = None
+
+    @computed_field(description="RFC3339 UTC form of `time`.")
+    @property
+    def observed_at(self) -> str:
+        return datetime.fromtimestamp(self.time, tz=UTC).isoformat()
+
+    @computed_field(
+        description=(
+            "RFC3339 UTC form of `lightning_strike_last_epoch`; null (omitted in "
+            "summary mode) when no strike is recorded."
+        )
+    )
+    @property
+    def lightning_strike_last_at(self) -> str | None:
+        return _rfc3339(self.lightning_strike_last_epoch)
 
 
 class Forecast(BaseModel):
@@ -335,9 +400,17 @@ class WeatherObservation(BaseModel):
     )
     @property
     def lightning_strike_last_at(self) -> str | None:
-        if self.lightning_strike_last_epoch is None:
-            return None
-        return datetime.fromtimestamp(self.lightning_strike_last_epoch, tz=UTC).isoformat()
+        return _rfc3339(self.lightning_strike_last_epoch)
+
+    @computed_field(
+        description=(
+            "16-point compass form of `wind_direction` (e.g. NNE); the direction "
+            "the wind blows from."
+        )
+    )
+    @property
+    def wind_direction_cardinal(self) -> str:
+        return _cardinal(self.wind_direction)
 
 
 # Main Response Models
@@ -359,15 +432,26 @@ class ForecastResponse(BaseModel):
 
     forecast: Forecast
     current_conditions: CurrentConditions
+    # Upstream omits it; the fetcher passes the requested id alongside the
+    # upstream payload, so the published schema can mark it required.
+    station_id: int = Field(description="The station this forecast is for, echoed from the request")
     location_name: str = Field(examples=["Seattle"])
     latitude: float
     longitude: float
     timezone: str = Field(description="IANA timezone identifier", examples=["America/Los_Angeles"])
-    timezone_offset_minutes: int = Field(description="UTC offset in minutes")
+    timezone_offset_minutes: int = Field(
+        description=(
+            "UTC offset in minutes in effect when this forecast was fetched; it "
+            "changes across daylight-saving transitions. Use the IANA "
+            "`timezone` for time calculations."
+        )
+    )
     units: Units = Field(
         description=(
             "Units of the forecast values, as reported by WeatherFlow (metric "
-            "by default). May differ from the station owner's display preference."
+            "by default). May differ from the station owner's display "
+            "preference, which this result does not carry: read `station_units` "
+            "from tempest_get_observation for it."
         )
     )
     # Truncation transparency. Populated by the get_forecast tool, not the

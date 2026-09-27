@@ -309,12 +309,12 @@ DO NOT USE for:
 REQUIRED:
 - Never guess a station_id. Without one, call tempest_get_stations first;
   if it returns exactly one station, use it without asking.
-- Read the `units` object on each observation/forecast result: it describes
-  the values (observations are always metric). `station_units` is the owner's
-  display preference, NOT the units of the values: convert to it when
-  presenting. Never assume °F/mph.
-- Prefer the RFC3339 fields (observed_at, lightning_strike_last_at,
-  retrieved_at) over raw epoch seconds for times and ages.
+- Each observation/forecast result's `units` describes its values
+  (observations are always metric). `station_units` (observation results
+  only) is the owner's display preference, NOT the values' units: convert to
+  it when presenting. Never assume °F/mph.
+- Prefer the RFC3339 `*_at` fields (observed_at, sunset_at, retrieved_at,
+  ...) over raw epoch seconds for times and ages.
 - On an error, branch on `code`. When `repair` is present, call its `tool`
   with its `arguments`. `temporary: true` means the same call may succeed
   after `retry_after_ms` (null: back off).
@@ -324,8 +324,8 @@ REQUIRED:
   the user needs the latest reading.
 
 TOOL SELECTION:
-- "How many / list my stations"              -> tempest_get_stations
-- "What can my station measure / hardware"   -> tempest_get_station_details(station_id)
+- "List my stations / what can they measure" -> tempest_get_stations
+- "Station hardware / sensor environment"    -> tempest_get_station_details
 - "Current conditions / right now"           -> tempest_get_observation(station_id)
 - "Forecast / later / tomorrow / this week"  -> tempest_get_forecast(station_id)
 - "What can this server do"                  -> tempest_get_capabilities
@@ -339,10 +339,10 @@ USE THIS SERVER when the user asks about:
   is my station", "elevation", "what timezone")
 
 NOTES:
-- tempest_get_stations returns devices but NOT sensor capabilities (upstream
-  omits them from the station list). For "what can my station measure", call
-  tempest_get_station_details(station_id) — the only tool that returns the
-  `capabilities` list.
+- tempest_get_stations returns `station_items`, the sensors each station
+  reports (air_temperature_humidity, wind, rain, ...), which usually answers
+  "what can my station measure". Only tempest_get_station_details returns the
+  `capabilities` list, which adds each sensor's indoor/outdoor environment.
 - tempest_get_forecast also returns a current snapshot, but
   tempest_get_observation is lighter for current-only questions.
 - tempest_get_forecast returns 6 hourly / 2 daily unless you pass hours/days.
@@ -374,7 +374,9 @@ SERVER SURFACE: mcp-server-tempest@{version}. Read tempest://capabilities (or
 call tempest_get_capabilities if your client does not expose MCP resources)
 for the structured surface summary (scope, tools, error codes, fingerprint).
 Each tool result also carries the fingerprint in
-_meta["net.bconnelly.tempest/fetch"], beside fingerprint_contract_version.
+_meta["net.bconnelly.tempest/fetch"], beside fingerprint_contract_version and
+the cache source. Some clients do not show _meta to the model; read
+`retrieved_at` for data age and the capabilities for the fingerprint.
 The fingerprint hashes the complete wire record of every tool and resource —
 descriptions included — plus error codes, instructions, the protocol
 contract, and the capability contract, so any change an agent could plan
@@ -631,7 +633,8 @@ _RETRIEVED_AT_SCHEMA: dict = {
     "format": "date-time",
     "description": (
         "RFC3339 UTC time this server fetched the data from WeatherFlow; it may "
-        "have been served from cache since. Omitted when unknown."
+        "have been served from cache since, so compare it with the current time "
+        "for the data's age. Omitted when unknown."
     ),
 }
 
@@ -681,7 +684,7 @@ _FORECAST_SCHEMA = _with_retrieved_at(
         ForecastResponse,
         {
             "$root": {"latitude", "longitude", "timezone_offset_minutes"},
-            "CurrentConditions": {"icon"},
+            "CurrentConditions": {"icon", "lightning_strike_last_at"},
             "DailyForecast": {"icon", "precip_icon"},
             "HourlyForecast": {"icon"},
         },
@@ -848,16 +851,18 @@ _CAPABILITY_CONTRACT: dict = {
     "timestamps": (
         "Upstream weather timestamps are Unix epoch seconds, as provided by "
         "WeatherFlow; interpret local-time fields with the station's IANA "
-        "`timezone`. Server-generated timestamps are RFC3339 UTC: `observed_at` "
-        "and `lightning_strike_last_at` on observation entries, `retrieved_at` "
-        "on every fetching tool's result, and ts_retrieved in "
-        '_meta["net.bconnelly.tempest/fetch"].'
+        "`timezone`. Server-generated timestamps are RFC3339 UTC `*_at` twins of "
+        "those epochs: `observed_at` and `lightning_strike_last_at` on "
+        "observation entries and forecast `current_conditions`; `day_start_at`, "
+        "`sunrise_at`, and `sunset_at` on daily forecasts; `starts_at` on hourly "
+        "forecasts. `retrieved_at` is on every fetching tool's result, and "
+        'ts_retrieved in _meta["net.bconnelly.tempest/fetch"].'
     ),
     "units": (
         "Observation values are metric/SI, described by the result's `units` "
         "object; forecast values are described by the forecast result's own "
         "`units`; `station_units` is the owner's display preference, not the "
-        "units of the values."
+        "units of the values, and only tempest_get_observation returns it."
     ),
     "caching": (
         "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for every tool that "
@@ -870,7 +875,8 @@ _CAPABILITY_CONTRACT: dict = {
         "(it may be omitted on some cache hits). tempest_get_capabilities is "
         "static — no upstream fetch or cache — so its _meta carries only "
         "{fingerprint, fingerprint_contract_version}."
-        " Results also carry `retrieved_at` (RFC3339 UTC) in structuredContent. "
+        " Results also carry `retrieved_at` (RFC3339 UTC) in structuredContent; "
+        "use it for data age, since some clients do not show _meta to the model. "
         "Pass refresh=true to tempest_get_observation or tempest_get_forecast to "
         "bypass the cache; station data has no refresh argument."
     ),
@@ -1281,7 +1287,7 @@ async def _get_forecast_data(
     await _notify_progress(ctx, progress=0, total=1)
     await _notify_info(ctx, f"Getting forecast for station {station_id} via the Tempest API")
     result = await api_get_forecast(station_id, token)
-    cache[cache_id] = ForecastResponse(**result)
+    cache[cache_id] = ForecastResponse(**result, station_id=station_id)
     _fetch_times[cache_id] = _now()
     await _notify_progress(ctx, progress=1, total=1)
     return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
@@ -1334,13 +1340,14 @@ async def get_stations(
     inventory questions without a follow-up call to tempest_get_station_details.
 
     Don't use for: current conditions (-> tempest_get_observation) or forecasts
-    (-> tempest_get_forecast). Also not for sensor capabilities ("what can my
-    station measure") — upstream does not supply them for the station list, so
-    this tool does not return a `capabilities` field at all; call
-    tempest_get_station_details(station_id) for that.
+    (-> tempest_get_forecast).
 
     Output: list of stations with id, name, location (lat, lon, timezone),
-    and devices. Admin/internal fields are excluded.
+    devices, and `station_items` — the sensors each station reports, which
+    usually answers "what can my station measure". Admin/internal fields are
+    excluded. There is no `capabilities` field here; call
+    tempest_get_station_details(station_id) if you need each sensor's
+    indoor/outdoor environment.
 
     Errors:
     - auth_missing/auth_invalid/auth_forbidden — token not set, rejected,
@@ -1378,11 +1385,11 @@ async def get_station_details(
 ) -> ToolResult:
     """Get configuration, devices, hardware, and location for one specific station.
 
-    Use when: user asks what the station can measure ("does it track UV",
-    "what sensors does it have") — this is the only tool that returns the
-    `capabilities` list; tempest_get_stations does not return it at all.
-    Also for station hardware, location ("where is my station", "elevation",
-    "what's my timezone"), or station-level metadata.
+    Use when: you need the `capabilities` list, which adds each sensor's
+    indoor/outdoor environment to the sensor inventory that
+    tempest_get_stations already returns as `station_items`. Also for one
+    station's hardware, location ("where is my station", "elevation", "what's
+    my timezone"), or station-level metadata.
 
     Don't use for: weather data (-> tempest_get_observation, -> tempest_get_forecast).
 
@@ -1494,9 +1501,11 @@ async def get_forecast(
     `truncation_hint` then states the shortfall. A plain call (no hours/days)
     is never reported as truncated.
 
-    Output: current snapshot + hourly + daily forecasts. Read `units` for
-    the units of these values (WeatherFlow returns metric by default, which
-    may differ from the owner's display preference).
+    Output: current snapshot + hourly + daily forecasts, with RFC3339 `*_at`
+    twins of the epoch times (sunrise_at, sunset_at, starts_at, ...). Read
+    `units` for the units of these values (WeatherFlow returns metric by
+    default). This result has no `station_units`: to present in the owner's
+    preferred units, read `station_units` from tempest_get_observation.
 
     Errors:
     - station_not_found — invalid station_id; call tempest_get_stations
@@ -1606,9 +1615,9 @@ async def get_observation(
             default=False,
             description=(
                 "If true, add secondary fields (heat index, wind chill, wet bulb, "
-                "air density, brightness, station/barometric pressure, final "
-                "precip totals) and station coordinates. Default is a condensed "
-                "summary."
+                "wet bulb globe temperature (WBGT), delta-T, air density, "
+                "brightness, station/barometric pressure, final precip totals) "
+                "and station coordinates. Default is a condensed summary."
             ),
         ),
     ] = False,
@@ -1634,13 +1643,17 @@ async def get_observation(
     "is it raining", "any lightning"). Lighter and faster than tempest_get_forecast
     for current-only questions.
 
-    Don't use for: future weather (-> tempest_get_forecast). Don't pass detailed=True
-    unless the user explicitly asks for full sensor data (heat index, wet
-    bulb, air density, etc.) — the default summary is what most answers need.
+    Don't use for: future weather (-> tempest_get_forecast).
+
+    Pass detailed=True only when the answer needs a secondary metric the
+    summary omits — heat index, wind chill, wet bulb, WBGT, delta-T (e.g.
+    spray safety), or air density — whether or not the user names it. The
+    default summary is what most answers need.
 
     Workflow: requires station_id from tempest_get_stations.
 
-    Output: current observations. Values are metric/SI — read `units`.
+    Output: current observations, including `wind_direction_cardinal`.
+    Values are metric/SI — read `units`.
     `station_units` is the owner's display preference, not the units of the
     values; convert to it when presenting to the user.
 

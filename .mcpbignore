@@ -22,6 +22,12 @@ prek.toml
 NOTES.md
 .agents/
 .claude/
+
+# Claude Code / Codex plugin packaging (distributed via the plugin marketplace)
+.claude-plugin/
+.codex-plugin/
+.mcp.json
+skills/
 .ipynb_checkpoints/
 
 # Caches and build artifacts

@@ -12,8 +12,8 @@ WeatherFlow Tempest weather-station data. It is a Python package
 - Python **3.13+**. Use **uv** for everything — never pip/poetry/conda.
 - Sync the environment: `uv sync --group dev`
 - Run tests: `uv run pytest`
-- Lint: `uv run ruff check src/ tests/ scripts/`
-- Format (check): `uv run ruff format --check src/ tests/ scripts/`
+- Lint: `uv run ruff check src/ tests/ scripts/ skills/`
+- Format (check): `uv run ruff format --check src/ tests/ scripts/ skills/`
 - Type check: `uv run ty check src`
 - Run the server: `uv run mcp-server-tempest`
 - Git hooks use **prek** (not pre-commit): `uvx prek install` then
@@ -26,6 +26,13 @@ WeatherFlow Tempest weather-station data. It is a Python package
 - `tests/` — pytest suite.
 - `scripts/` — maintenance scripts (e.g. `gen_manifest.py`, which keeps
   `manifest.json` in sync with `pyproject.toml`).
+- `.claude-plugin/`, `.codex-plugin/`, `.mcp.json`, `skills/` — the `tempest`
+  Claude Code / Codex plugin: the server pinned to its PyPI release plus the
+  user-facing skills (`weather-report`, `estimate-cloudiness`). These skills
+  are maintained here; update them in the same PR as any server change they
+  describe. Not to be confused with `.agents/skills/`, which are skills for
+  developing this repo. `tests/test_plugin.py` guards version pins and tool
+  names.
 - `.github/workflows/` — CI, release, MCPB bundle, CodeQL, Claude.
 
 ## Branching & commits
@@ -58,7 +65,10 @@ WeatherFlow Tempest weather-station data. It is a Python package
 - Pre-1.0 (`0.x`): minor bumps may include breaking changes; do not treat
   a missing deprecation window as a blocker.
 - Keep `pyproject.toml` version, the latest `CHANGELOG.md` section, and the
-  git tag in agreement (CI verifies this on release).
+  git tag in agreement (CI verifies this on release). A version bump also
+  updates `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and the
+  `mcp-server-tempest==X.Y.Z` pin in `.mcp.json` (`tests/test_plugin.py`
+  enforces it), and regenerates `manifest.json`.
 - Release = push a `vX.Y.Z` tag; `release.yml` publishes to PyPI via OIDC
   trusted publishing, creates the GitHub Release, and attaches the `.mcpb`
   bundle. See [`CHANGELOG.md`](CHANGELOG.md).
