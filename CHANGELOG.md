@@ -89,6 +89,11 @@ selection guidance invalidate a cached surface.
   authoritative: via `server/discover` on sessionless revisions, or
   `InitializeResult.protocolVersion` on handshake-era ones.
 
+- Server `instructions` reordered so negative scope, binding rules (station_id
+  discovery, units, repair, refresh) and the pointer to the full contract sit
+  inside Claude Code's default 2,048-character prefix, with a pinned final
+  line (`END OF TEMPEST INSTRUCTIONS`) that an agent can check its copy against.
+
 ### Fixed
 
 - **`python -OO` no longer serves a catalog agents cannot select from.** Tool

@@ -1480,12 +1480,38 @@ class TestServerInstructions:
             "TOOL SELECTION",
             "NOTES",
             "AMBIENT STATE",
+            "REQUIRED",
             "TYPICAL WORKFLOW",
             "SETUP",
             "SERVER SURFACE",
             "TRANSPORT",
         ):
             assert marker in text, f"{marker!r} missing from instructions"
+
+    # Claude Code delivers only the first 2,048 characters of `instructions` by
+    # default (measured 2026-09-26: .agents/skills/agent-friendly-mcp/decisions/
+    # 006-instructions-prefix.md; observed again 2026-09-27 cutting this
+    # server's v0.10.0 text inside AMBIENT STATE). The cap is user-configurable
+    # (CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH), so this pins the default only.
+    CLAUDE_CODE_PREFIX_CHARS = 2048
+    SENTINEL = "END OF TEMPEST INSTRUCTIONS"
+
+    def test_sentinel_is_last_line(self):
+        assert mcp.instructions.rstrip("\n").splitlines()[-1] == self.SENTINEL
+
+    def test_binding_rules_fit_claude_code_prefix(self):
+        head = mcp.instructions[: self.CLAUDE_CODE_PREFIX_CHARS]
+        for phrase in (
+            self.SENTINEL,  # the self-check sentence names it at the head
+            "tempest://capabilities",
+            "DO NOT USE",
+            "Never guess a station_id",
+            "exactly one station",
+            "station_units",
+            "`repair`",
+            "refresh=true",
+        ):
+            assert phrase in head, f"{phrase!r} falls past the Claude Code prefix"
 
     def test_instructions_carries_server_surface_fingerprint(self):
         # SERVER SURFACE acts as a lightweight capability fingerprint (§9 of

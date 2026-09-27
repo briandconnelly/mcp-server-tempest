@@ -293,8 +293,41 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
 
 
 _INSTRUCTIONS = """\
-WeatherFlow Tempest — read-only access to a user's personal Tempest weather
+WeatherFlow Tempest — read-only access to the user's own Tempest weather
 station(s). Not a global weather service.
+Completeness check: this text ends with the line END OF TEMPEST INSTRUCTIONS.
+If your copy does not, read tempest://capabilities (or call
+tempest_get_capabilities) for the full contract.
+
+DO NOT USE for:
+- Locations away from the user's station, or general/global weather —
+  use a public weather API
+- Air quality, pollen, smoke index — not provided
+- Severe-weather alerts, radar imagery, watches/warnings — not provided
+- Historical analysis beyond what the live API returns (no archive)
+
+REQUIRED:
+- Never guess a station_id. Without one, call tempest_get_stations first;
+  if it returns exactly one station, use it without asking.
+- Read the `units` object on each observation/forecast result: it describes
+  the values (observations are always metric). `station_units` is the owner's
+  display preference, NOT the units of the values: convert to it when
+  presenting. Never assume °F/mph.
+- Prefer the RFC3339 fields (observed_at, lightning_strike_last_at,
+  retrieved_at) over raw epoch seconds for times and ages.
+- On an error, branch on `code`. When `repair` is present, call its `tool`
+  with its `arguments`. `temporary: true` means the same call may succeed
+  after `retry_after_ms` (null: back off).
+- Results may be cached up to WEATHERFLOW_CACHE_TTL (default 300s); pass
+  refresh=true to tempest_get_observation or tempest_get_forecast when the
+  user needs the latest reading.
+
+TOOL SELECTION:
+- "How many / list my stations"              -> tempest_get_stations
+- "What can my station measure / hardware"   -> tempest_get_station_details(station_id)
+- "Current conditions / right now"           -> tempest_get_observation(station_id)
+- "Forecast / later / tomorrow / this week"  -> tempest_get_forecast(station_id)
+- "What can this server do"                  -> tempest_get_capabilities
 
 USE THIS SERVER when the user asks about:
 - Current conditions on their station ("is it raining", "how warm is it",
@@ -304,31 +337,13 @@ USE THIS SERVER when the user asks about:
 - Station inventory, location, devices ("what stations do I have", "where
   is my station", "elevation", "what timezone")
 
-DO NOT USE for:
-- Locations away from the user's station, or general/global weather —
-  use a public weather API
-- Air quality, pollen, smoke index — not provided
-- Severe-weather alerts, radar imagery, watches/warnings — not provided
-- Historical analysis beyond what the live API returns (no archive)
-
-TOOL SELECTION:
-- "How many / list my stations"              -> tempest_get_stations
-- "Deeper config / hardware for one station" -> tempest_get_station_details(station_id)
-- "Current conditions / right now"           -> tempest_get_observation(station_id)
-- "Forecast / later / tomorrow / this week"  -> tempest_get_forecast(station_id)
-- "What can this server do"                  -> tempest_get_capabilities
-
 NOTES:
-- Units: observation values are metric; forecast values are in the result's
-  own `units` object. `station_units` is the owner's display preference, NOT
-  the units of the values: convert to it when presenting. Never assume °F/mph.
 - tempest_get_stations returns devices but NOT sensor capabilities (upstream
-  omits them from the station list, so the field is absent from its schema
-  and its responses). For "what can my station measure", call
-  tempest_get_station_details(station_id) — it is the only tool that returns
-  the `capabilities` list.
-- tempest_get_forecast also returns a current snapshot, but tempest_get_observation is
-  lighter for current-only questions.
+  omits them from the station list). For "what can my station measure", call
+  tempest_get_station_details(station_id) — the only tool that returns the
+  `capabilities` list.
+- tempest_get_forecast also returns a current snapshot, but
+  tempest_get_observation is lighter for current-only questions.
 - tempest_get_forecast returns 6 hourly / 2 daily unless you pass hours/days.
   Entry counts come from hours/days alone; detailed=True adds field density
   (null fields, station coordinates) and never changes how many entries come
@@ -340,17 +355,16 @@ AMBIENT STATE (affects freshness and cache repair):
   (default 100): in-memory cache used by every tool that fetches upstream
   (tempest_get_capabilities is static and uses no cache).
 - WEATHERFLOW_DISK_CACHE_TTL (default 86400s): disk cache for
-  tempest_get_stations and tempest_get_station_details only. Survives restarts; per-token
-  subdirectory (hash-keyed for account isolation) under
+  tempest_get_stations and tempest_get_station_details only. Survives
+  restarts; per-token subdirectory (hash-keyed for account isolation) under
   platformdirs.user_cache_dir("mcp-server-tempest").
-- To force fresh data: restart the server (clears in-memory) or delete
-  the cache directory above (clears disk).
+- refresh=true bypasses the cache for observation/forecast. Station data has
+  no refresh argument: restart the server (clears in-memory) or delete the
+  cache directory above (clears disk).
 
 TYPICAL WORKFLOW:
-1. If you don't already have a station_id, call tempest_get_stations first.
-   Station ids are not guessable — don't fabricate one.
-2. Then tempest_get_observation(station_id) or tempest_get_forecast(station_id).
-   If tempest_get_stations returned one station, use it without asking.
+1. tempest_get_stations (skip if you already hold a station_id).
+2. tempest_get_observation(station_id) or tempest_get_forecast(station_id).
 
 SETUP (required):
 - WEATHERFLOW_API_TOKEN — get one at https://tempestwx.com/settings/tokens.
@@ -373,6 +387,7 @@ accepts {accepted_revisions}. The revision in force is the one negotiated for
 your connection — via server/discover on sessionless revisions (2026-07-28 and
 later), or InitializeResult.protocolVersion on handshake-era revisions — and
 that value, not this line, is authoritative.
+END OF TEMPEST INSTRUCTIONS
 """.format(
     version=_PKG_VERSION,
     protocol_target=_AUTHORED_PROTOCOL_TARGET,
