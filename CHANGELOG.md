@@ -21,6 +21,19 @@ entries already carry `local_day`/`local_hour`.
 - Forecast results echo `station_id` (F1).
 - Observation entries carry `wind_direction_cardinal` (16-point compass), in
   both summary and detailed modes (F5).
+- The `tempest` Claude Code / Codex plugin now lives in this repository
+  (`.claude-plugin/`, `.codex-plugin/`, `.mcp.json`, `skills/`), moved from
+  `briandconnelly-plugins`, so the `weather-report` and `estimate-cloudiness`
+  skills change together with the server they describe.
+  `tests/test_plugin.py` keeps the plugin versions and the `.mcp.json` pin in
+  step with `pyproject.toml` and fails if a skill names a tool the server does
+  not expose. The skills' tests now run in the main suite.
+- Skill updates for this release: `retrieved_at` instead of `_meta` for
+  freshness (F3); `detailed=true` on observations whenever a secondary metric
+  is needed, and a correction that forecast `detailed` adds no derived metrics
+  (F4); `station_items` for sensor inventory (F6); fetch `station_units` from
+  the observation for forecast-only answers (F1); use the new forecast `*_at`
+  times and observation `wind_direction_cardinal`.
 
 ### Changed
 

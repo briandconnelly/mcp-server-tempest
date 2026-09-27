@@ -53,6 +53,22 @@ Just add an additional `--from` argument:
 | **Environment** | `WEATHERFLOW_API_TOKEN` = `<YOUR TOKEN>` |
 
 
+### Install as a Claude Code or Codex plugin
+
+The `tempest` plugin bundles the server with two skills — `weather-report`
+(current conditions, forecasts, and weather-based decisions) and
+`estimate-cloudiness` (sky condition from solar radiation). In Claude Code:
+
+```
+/plugin marketplace add briandconnelly/briandconnelly-plugins
+/plugin install tempest@briandconnelly-plugins
+```
+
+Set `WEATHERFLOW_API_TOKEN` in your environment before starting the client.
+The plugin's sources live in this repository (`.claude-plugin/`,
+`.codex-plugin/`, `.mcp.json`, `skills/`).
+
+
 ### Install as a Desktop Extension (`.mcpb`)
 
 For one-click installation in apps that support [MCP Bundles](https://github.com/modelcontextprotocol/mcpb/)
@@ -129,11 +145,13 @@ It is the authoritative, machine-readable contract; the table above is a quick g
 - **Units.** Observation values are always metric/SI and are described by the result's
   `units` object. Forecast values are described by the forecast's own `units`. The
   observation's `station_units` is the station owner's *display preference*, not the unit
-  of the values: convert to it when presenting.
+  of the values: convert to it when presenting. Only observations carry `station_units`.
 - **Times.** Raw fields such as `timestamp`, `time`, and `lightning_strike_last_epoch` are
-  Unix seconds. Observations also carry `observed_at` and `lightning_strike_last_at`, and
-  every data result carries `retrieved_at`, all RFC3339 in UTC. Hourly forecast entries
-  include `local_day` and `local_hour` in the station's own timezone.
+  Unix seconds. Each has an RFC3339 UTC `*_at` twin: `observed_at` and
+  `lightning_strike_last_at` on observations and the forecast's `current_conditions`,
+  `sunrise_at`, `sunset_at`, and `day_start_at` on daily forecasts, and `starts_at` on
+  hourly forecasts. Every data result carries `retrieved_at`, when it was fetched upstream.
+  Hourly forecast entries include `local_day` and `local_hour` in the station's own timezone.
 - **Errors** come back as a tool error whose structured content has a symbolic `code`
   (branch on it, not on `message`), `temporary` (plus `retry_after_ms` when true), and,
   when the server can build one, `repair`: a corrected call to make as-is. The full error

@@ -1,0 +1,20 @@
+{
+  "name": "tempest",
+  "description": "MCP server for accessing WeatherFlow Tempest personal weather station data",
+  "version": "0.11.0",
+  "author": {
+    "name": "Brian Connelly",
+    "url": "https://github.com/briandconnelly"
+  },
+  "repository": "https://github.com/briandconnelly/mcp-server-tempest",
+  "license": "MIT",
+  "keywords": [
+    "weather",
+    "tempest",
+    "weatherflow",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "homepage": "https://github.com/briandconnelly/mcp-server-tempest"
+}
