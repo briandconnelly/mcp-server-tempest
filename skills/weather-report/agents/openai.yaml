@@ -1,0 +1,4 @@
+interface:
+  display_name: "Weather Report"
+  short_description: "Weather answers from your Tempest station"
+  default_prompt: "Use $weather-report to summarize current conditions and the next 12 hours at my Tempest station."

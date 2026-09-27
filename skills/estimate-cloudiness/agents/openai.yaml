@@ -1,0 +1,4 @@
+interface:
+  display_name: "Estimate Cloudiness"
+  short_description: "How cloudy it is now at your Tempest station"
+  default_prompt: "Use $estimate-cloudiness to tell me how cloudy it is right now at my Tempest station."

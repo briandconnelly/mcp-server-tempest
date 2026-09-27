@@ -28,6 +28,9 @@ entries already carry `local_day`/`local_hour`.
   `tests/test_plugin.py` keeps the plugin versions and the `.mcp.json` pin in
   step with `pyproject.toml` and fails if a skill names a tool the server does
   not expose. The skills' tests now run in the main suite.
+- Each skill has an `agents/openai.yaml` with its display name, short
+  description, and suggested prompt for Codex and the ChatGPT desktop app.
+  The MCP server comes from the plugin, so no tool dependencies are declared.
 - Skill updates for this release: `retrieved_at` instead of `_meta` for
   freshness (F3); `detailed=true` on observations whenever a secondary metric
   is needed, and a correction that forecast `detailed` adds no derived metrics
