@@ -214,14 +214,18 @@ def test_protocol_contract_is_published_and_fingerprinted():
     """The authored target is distinct from what a session negotiates, and the
     accepted set is read from the SDK so it cannot claim revisions the server
     would reject."""
-    from mcp.server.session import SUPPORTED_PROTOCOL_VERSIONS
+    from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 
     from mcp_server_tempest import server as s
 
     protocol = s._build_capabilities()["protocol"]
-    assert protocol["authored_target"] == "2025-11-25"
-    assert protocol["accepted_revisions"] == sorted(SUPPORTED_PROTOCOL_VERSIONS)
+    assert protocol["authored_target"] == "2026-07-28"
+    assert protocol["accepted_revisions"] == sorted(
+        (*HANDSHAKE_PROTOCOL_VERSIONS, *MODERN_PROTOCOL_VERSIONS)
+    )
     assert protocol["authored_target"] in protocol["accepted_revisions"]
+    # The handshake-era fallback the legacy-protocol tests exercise.
+    assert "2025-11-25" in protocol["accepted_revisions"]
 
     baseline = s._compute_fingerprint()
     with patch.object(s, "_MCP_PROTOCOL", {**s._MCP_PROTOCOL, "authored_target": "2024-11-05"}):
