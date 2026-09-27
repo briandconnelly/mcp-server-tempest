@@ -122,15 +122,12 @@ selection guidance invalidate a cached surface.
   only. The forecast description no longer claims station-configured units:
   read its `units` object.
 
-- **README examples now run.** Every Python example called
-  `client.call_tool(...)` on an undefined `client` and indexed the returned
-  `CallToolResult` like a dict (`TypeError`). Examples now set up a FastMCP
-  client and read `.structured_content`, and `tests/test_readme.py` executes
-  every README Python block against the in-process server. The README also
-  gains what the server does not do, all five tools with their arguments,
-  how to read units, times, and errors, a corrected device-status example,
-  station-local forecast hours, and a Contributing section that defers to
-  AGENTS.md.
+- **README rewritten for MCP users.** The Python examples, which were also
+  broken (they indexed the `CallToolResult` from `client.call_tool` like a
+  dict), are replaced by example questions mapped to the tool an assistant
+  uses. The README now states what the server does not do, lists all five
+  tools with their arguments, explains how to read units, times, and errors,
+  and points contributors to AGENTS.md.
 
 - **`python -OO` no longer serves a catalog agents cannot select from.** Tool
   descriptions come from docstrings, which `-OO` discards, so an optimized run

@@ -141,97 +141,24 @@ It is the authoritative, machine-readable contract; the table above is a quick g
   the error format (`next` became `repair`); see the [CHANGELOG](CHANGELOG.md).
 
 
-## 🌟 Examples
+## 🌟 Example questions
 
-This script runs the server in-process through the [FastMCP](https://gofastmcp.com) client.
-Save it as `example.py` and run it with your token set:
-`WEATHERFLOW_API_TOKEN=<YOUR TOKEN> uv run --with mcp-server-tempest python example.py`.
-Tool results are `CallToolResult` objects; the data is in `.structured_content`.
+Once the server is configured, ask your assistant in plain language. Some examples, with the
+tool it will typically use:
 
-```python
-import asyncio
+| You ask | Tool |
+|---------|------|
+| "What weather stations do I have?" / "What's my station's elevation?" | `tempest_get_stations` |
+| "Is it raining at home right now?" / "How windy is it?" | `tempest_get_observation` |
+| "Has there been any lightning nearby?" | `tempest_get_observation` |
+| "Will it freeze tonight?" / "What's the forecast for the weekend?" | `tempest_get_forecast` |
+| "Is it a good afternoon for a run?" | `tempest_get_forecast` |
+| "What can my station measure?" / "What hardware does it have?" | `tempest_get_station_details` |
+| "What can this weather server do?" | `tempest_get_capabilities` |
 
-from fastmcp import Client
-
-from mcp_server_tempest.server import mcp
-
-
-async def main() -> None:
-    async with Client(mcp) as client:
-        result = await client.call_tool("tempest_get_stations")
-        station_id = result.structured_content["stations"][0]["station_id"]
-
-        result = await client.call_tool("tempest_get_observation", {"station_id": station_id})
-        obs = result.structured_content
-        now, units = obs["obs"][0], obs["units"]  # `units` describes the values (metric)
-
-        print(f"Observed at {now['observed_at']}")
-        print(f"Temperature: {now['air_temperature']} °{units['units_temp'].upper()}")
-        print(f"Humidity: {now['relative_humidity']}%")
-        print(f"Wind: {now['wind_avg']} {units['units_wind']}")
-        print(f"Rain today: {now['precip_accum_local_day']} {units['units_precip']}")
-
-
-asyncio.run(main())
-```
-
-The snippets below go inside the same `async with Client(mcp) as client:` block, after
-`station_id` is set.
-
-### Forecast
-
-```python
-result = await client.call_tool(
-    "tempest_get_forecast", {"station_id": station_id, "hours": 6, "days": 3}
-)
-forecast = result.structured_content
-units = forecast["units"]  # the forecast's own units: read them, don't assume
-
-for day in forecast["forecast"]["daily"]:
-    print(
-        f"{day['month_num']}/{day['day_num']}: {day['conditions']}, "
-        f"{day['air_temp_low']}–{day['air_temp_high']} °{units['units_temp'].upper()}, "
-        f"{day['precip_probability']}% chance of rain"
-    )
-
-for hour in forecast["forecast"]["hourly"]:
-    # local_hour is already in the station's timezone; `time` is Unix seconds.
-    print(f"{hour['local_hour']:02d}:00  {hour['air_temperature']}°  {hour['conditions']}")
-```
-
-### Station details
-
-```python
-result = await client.call_tool("tempest_get_station_details", {"station_id": station_id})
-station = result.structured_content
-
-print(
-    f"{station['name']}: {station['latitude']}, {station['longitude']} "
-    f"({station['station_meta']['elevation']} m, {station['timezone']})"
-)
-for device in station["devices"]:
-    # The API does not report whether a device is online; a device with no
-    # serial number is inactive.
-    serial = device.get("serial_number") or "inactive"
-    print(f"{device['device_type']}: {serial}")
-for capability in station.get("capabilities") or []:
-    print(f"Measures {capability['capability']} ({capability['environment']})")
-```
-
-### Recovering from an error
-
-```python
-result = await client.call_tool(
-    "tempest_get_forecast", {"station_id": station_id, "hours": 100}, raise_on_error=False
-)
-if result.is_error:
-    error = result.structured_content
-    print(f"{error['code']}: {error['message']}")
-    if "repair" in error:  # a corrected call, ready to make as-is
-        repair = error["repair"]
-        result = await client.call_tool(repair["tool"], repair["arguments"])
-        print(f"Retried with {repair['arguments']}")
-```
+Building your own client instead? Any MCP client works; the tools return structured
+results described by each tool's output schema. See, for example, the
+[FastMCP client docs](https://gofastmcp.com/clients/client).
 
 
 ## 🤝 Contributing
@@ -252,7 +179,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - [WeatherFlow](https://weatherflow.com/) for providing the Tempest weather station and API
 - [Model Context Protocol](https://modelcontextprotocol.io/) for the MCP specification
-- [FastMCP](https://github.com/jlowin/fastmcp) for the MCP server framework
+- [FastMCP](https://github.com/PrefectHQ/fastmcp) for the MCP server framework
 
 ## 📞 Support
 
