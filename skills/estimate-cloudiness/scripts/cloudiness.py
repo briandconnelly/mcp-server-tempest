@@ -321,6 +321,8 @@ def main() -> None:
             parser.error(f"{name} must be a finite number")
     if args.solar_radiation < 0:
         parser.error("--solar-radiation must be non-negative")
+    if args.pressure <= 0:
+        parser.error("--pressure must be positive")
     if not -90 <= args.lat <= 90:
         parser.error("--lat must be between -90 and 90")
     if not -180 <= args.lon <= 180:

@@ -17,9 +17,10 @@ def _rfc3339(epoch: int | None) -> str | None:
 
 
 def _cardinal(degrees: float) -> str:
-    """16-point compass direction for a bearing in degrees (22.5° sectors
-    centered on each point, so 348.75–11.25 is N), matching the forecast's
-    upstream `wind_direction_cardinal`."""
+    """16-point compass direction for a bearing in degrees, matching the
+    forecast's upstream `wind_direction_cardinal`. Sectors are 22.5° wide,
+    centered on each point, and half-open: N is [348.75, 11.25), so exactly
+    11.25° is NNE."""
     # Round half up, not round()'s half-to-even, so every sector boundary
     # resolves clockwise the same way.
     return _CARDINAL_POINTS[int((degrees % 360) / 22.5 + 0.5) % 16]
@@ -431,11 +432,9 @@ class ForecastResponse(BaseModel):
 
     forecast: Forecast
     current_conditions: CurrentConditions
-    # Populated by the get_forecast tool (upstream omits it); the default keeps
-    # `ForecastResponse(**raw_upstream)` working.
-    station_id: int | None = Field(
-        default=None, description="The station this forecast is for, echoed from the request."
-    )
+    # Upstream omits it; the fetcher passes the requested id alongside the
+    # upstream payload, so the published schema can mark it required.
+    station_id: int = Field(description="The station this forecast is for, echoed from the request")
     location_name: str = Field(examples=["Seattle"])
     latitude: float
     longitude: float

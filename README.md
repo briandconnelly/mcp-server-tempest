@@ -66,7 +66,9 @@ The `tempest` plugin bundles the server with two skills — `weather-report`
 
 Set `WEATHERFLOW_API_TOKEN` in your environment before starting the client.
 The plugin's sources live in this repository (`.claude-plugin/`,
-`.codex-plugin/`, `.mcp.json`, `skills/`).
+`.codex-plugin/`, `.mcp.json`, `skills/`). The marketplace installs the
+latest *released* plugin, so skill changes on `main` reach it with the next
+release.
 
 
 ### Install as a Desktop Extension (`.mcpb`)

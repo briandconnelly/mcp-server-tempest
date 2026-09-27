@@ -22,7 +22,7 @@ Never classify cloudiness from raw solar radiation thresholds alone.
 
 ## Workflow
 
-1. Resolve the station with `tempest_get_stations` (single station: use it; multiple: prefer the most recently active, else ask).
+1. Resolve the station with `tempest_get_stations` (single station: use it; multiple: list the station names and ask the user to choose, unless the question already names one).
    Note its `latitude` and `longitude` — the script needs them.
 2. Call `tempest_get_observation(station_id, detailed=true)`.
    Detailed mode is required: the concise response omits `station_pressure`.

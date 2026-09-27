@@ -29,7 +29,7 @@ Use WebSearch only to supplement station data with seasonal norms, historical re
 
 1. **Resolve the station**: Call `tempest_get_stations`.
    - If one station is returned, use it.
-   - If multiple are returned, prefer the most recently active station; if still ambiguous, list the station names and ask the user to choose.
+   - If multiple are returned and the question doesn't name one, list the station names and ask the user to choose — the station list carries no activity timestamp to pick by.
    - For "what can my station measure", read `station_items` from `tempest_get_stations` — it lists the sensors each station reports.
      Call `tempest_get_station_details` only if you also need each sensor's indoor/outdoor environment (its `capabilities` list); otherwise it repeats the `tempest_get_stations` entry.
    - If no stations are found, stop and tell the user their account has no Tempest stations configured.

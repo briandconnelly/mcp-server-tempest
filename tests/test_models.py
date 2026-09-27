@@ -274,6 +274,7 @@ class TestWeatherObservation:
 class TestForecastResponse:
     def test_valid(self):
         resp = ForecastResponse(
+            station_id=12345,
             forecast={
                 "daily": [],
                 "hourly": [],

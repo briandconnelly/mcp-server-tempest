@@ -1,6 +1,9 @@
 """Regression tests for cloudiness.py.
 
-Stdlib-only; run with:  python3 -m unittest test_cloudiness -v
+Stdlib-only. From the repository root:
+    uv run pytest skills/estimate-cloudiness
+or without uv:
+    python3 -m unittest discover -s skills/estimate-cloudiness/scripts -v
 """
 
 import json
@@ -173,6 +176,23 @@ class TestCli(unittest.TestCase):
             "-5",
         )
         self.assertNotEqual(p.returncode, 0)
+
+    def test_rejects_non_positive_pressure(self):
+        for bad in ("0", "-10"):
+            p = run_cli(
+                "--lat",
+                str(LAT),
+                "--lon",
+                str(LON),
+                "--timestamp",
+                str(TS_DAY),
+                "--solar-radiation",
+                "178",
+                "--pressure",
+                bad,
+            )
+            self.assertNotEqual(p.returncode, 0, msg=bad)
+            self.assertIn("positive", p.stderr)
 
 
 if __name__ == "__main__":

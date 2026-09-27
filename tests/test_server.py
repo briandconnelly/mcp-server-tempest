@@ -2265,6 +2265,12 @@ class TestReview3Fields:
         else:
             assert "lightning_strike_last_at" not in current
 
+    def test_forecast_schema_requires_station_id(self):
+        from mcp_server_tempest.server import _FORECAST_SCHEMA
+
+        assert "station_id" in _FORECAST_SCHEMA["required"]
+        assert _FORECAST_SCHEMA["properties"]["station_id"]["type"] == "integer"
+
     async def test_forecast_lightning_strike_last_at_when_recorded(self, mock_ctx):
         data = {
             **SAMPLE_FORECAST_DATA,

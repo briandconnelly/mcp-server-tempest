@@ -1287,7 +1287,7 @@ async def _get_forecast_data(
     await _notify_progress(ctx, progress=0, total=1)
     await _notify_info(ctx, f"Getting forecast for station {station_id} via the Tempest API")
     result = await api_get_forecast(station_id, token)
-    cache[cache_id] = ForecastResponse(**result)
+    cache[cache_id] = ForecastResponse(**result, station_id=station_id)
     _fetch_times[cache_id] = _now()
     await _notify_progress(ctx, progress=1, total=1)
     return Fetched(cache[cache_id], "miss", _fetch_times[cache_id])
@@ -1559,7 +1559,6 @@ async def get_forecast(
         # returned_* are always factual; requested_* echo only what the agent
         # explicitly passed (omitted when None), so they never report a default
         # the agent didn't choose.
-        result["station_id"] = station_id
         result["truncated"] = truncated
         result["returned_hours"] = returned_hours
         result["returned_days"] = returned_days
