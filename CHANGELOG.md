@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-27
+
+Fixes a critical units mislabel in `tempest_get_observation`; see Fixed.
+
 Agent-friendliness review findings F1–F3 and F7. Both F1/F2 defects were prose
 or a toggle promising behavior the code did not deliver. Note that no
 fingerprint scheme could have caught them: the incorrect station description
