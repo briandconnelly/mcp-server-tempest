@@ -155,11 +155,11 @@ def _make_hourly_forecast(hour: int = 0) -> dict:
 def _make_observation() -> dict:
     return {
         "timestamp": 1700000000,
-        "air_temperature": 72.0,
-        "barometric_pressure": 30.1,
-        "station_pressure": 29.9,
+        "air_temperature": 22.2,
+        "barometric_pressure": 1019.2,
+        "station_pressure": 1012.6,
         "pressure_trend": "steady",
-        "sea_level_pressure": 30.1,
+        "sea_level_pressure": 1019.2,
         "relative_humidity": 50,
         "precip": 0.0,
         "precip_accum_last_1hr": 0.0,
@@ -171,10 +171,10 @@ def _make_observation() -> dict:
         "precip_minutes_local_day": 0,
         "precip_minutes_local_yesterday": 0,
         "precip_minutes_local_yesterday_final": 0,
-        "wind_avg": 5.0,
+        "wind_avg": 2.2,
         "wind_direction": 180,
-        "wind_gust": 10.0,
-        "wind_lull": 2.0,
+        "wind_gust": 4.5,
+        "wind_lull": 0.9,
         "solar_radiation": 500.0,
         "uv": 3.0,
         "brightness": 50000.0,
@@ -183,13 +183,13 @@ def _make_observation() -> dict:
         "lightning_strike_count": 0,
         "lightning_strike_count_last_1hr": 0,
         "lightning_strike_count_last_3hr": 0,
-        "feels_like": 72.0,
-        "heat_index": 72.0,
-        "wind_chill": 72.0,
-        "dew_point": 52.0,
-        "wet_bulb_temperature": 60.0,
-        "wet_bulb_globe_temperature": 65.0,
-        "delta_t": 20.0,
+        "feels_like": 22.2,
+        "heat_index": 22.2,
+        "wind_chill": 22.2,
+        "dew_point": 11.1,
+        "wet_bulb_temperature": 15.6,
+        "wet_bulb_globe_temperature": 18.3,
+        "delta_t": 6.6,
         "air_density": 1.2,
     }
 
@@ -2012,3 +2012,60 @@ async def test_observation_structured_content_conforms_to_advertised_schema():
                 r = await c.call_tool("tempest_get_observation", {"station_id": 12345})
     # The emitted structured content validates against the schema the tool advertises.
     Draft202012Validator(tool.output_schema).validate(r.structured_content)
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestObservationUnits:
+    """C1 (review 2): observation values are metric/SI regardless of the
+    owner's display preference. `units` must describe the values;
+    `station_units` is preference only."""
+
+    @pytest.mark.parametrize("detailed", [False, True])
+    async def test_units_describe_metric_values_not_station_preference(self, mock_ctx, detailed):
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = _structured(
+                await get_observation(station_id=12345, detailed=detailed, ctx=mock_ctx)
+            )
+        assert result["units"]["units_temp"] == "c"
+        assert result["units"]["units_wind"] == "mps"
+        assert result["units"]["units_pressure"] == "mb"
+        assert result["units"]["units_precip"] == "mm"
+        assert result["units"]["units_distance"] == "km"
+        # The fixture's owner preference is imperial and must survive untouched.
+        assert result["station_units"]["units_temp"] == "f"
+
+    def test_output_schema_advertises_units_as_required(self):
+        # The spec requires every observation result to carry `units`, so the
+        # published contract must say so (a defaulted field is otherwise
+        # optional in a serialization-mode schema).
+        assert "units" in _OBSERVATION_SCHEMA["properties"]
+        assert "units" in _OBSERVATION_SCHEMA["required"]
+
+    async def test_forecast_units_pass_through_from_upstream(self, mock_ctx):
+        metric = {
+            "units_temp": "c",
+            "units_wind": "mps",
+            "units_pressure": "mb",
+            "units_precip": "mm",
+            "units_distance": "km",
+            "units_other": "metric",
+        }
+        data = {**SAMPLE_FORECAST_DATA, "units": metric}
+        with patch("mcp_server_tempest.server.api_get_forecast", return_value=data):
+            result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
+        assert result["units"] == metric
+
+    def test_contract_text_does_not_equate_station_units_with_value_units(self):
+        from pathlib import Path
+
+        assert "Units follow each station's config" not in mcp.instructions
+        obs_doc = get_observation.__doc__ or ""
+        assert "configured units" not in obs_doc
+        assert "`units`" in obs_doc and "display preference" in obs_doc
+        assert "configured units" not in (get_forecast.__doc__ or "")
+        readme = (Path(__file__).parent.parent / "README.md").read_text()
+        assert "obs['station_units']['units_wind']" not in readme
+        assert 'obs["station_units"]' not in readme

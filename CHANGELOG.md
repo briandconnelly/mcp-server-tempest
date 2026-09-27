@@ -110,6 +110,14 @@ selection guidance invalidate a cached surface.
   schema, where `detailed` was documented as "controls density only" while
   `hours` and `days` were documented as returning "all available in detailed
   mode".
+- **Observation values were labeled with the wrong units (critical).**
+  `tempest_get_observation` returns metric/SI values, but the instructions,
+  tool description, and README told agents to read them with `station_units`,
+  which is only the owner's display preference, so an imperial-preference
+  station's 12.5 °C read as 12.5 °F. Observation results now carry a `units`
+  object describing the values; `station_units` is documented as preference
+  only. The forecast description no longer claims station-configured units:
+  read its `units` object.
 
 ## [0.10.0] - 2026-07-02
 

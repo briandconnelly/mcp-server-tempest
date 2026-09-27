@@ -319,8 +319,9 @@ TOOL SELECTION:
 - "What can this server do"                  -> tempest_get_capabilities
 
 NOTES:
-- Units follow each station's config — read 'station_units' / 'units' fields.
-  Never assume °F vs °C or mph vs km/h.
+- Units: observation values are metric; forecast values are in the result's
+  own `units` object. `station_units` is the owner's display preference, NOT
+  the units of the values: convert to it when presenting. Never assume °F/mph.
 - tempest_get_stations returns devices but NOT sensor capabilities (upstream
   omits them from the station list, so the field is absent from its schema
   and its responses). For "what can my station measure", call
@@ -1395,8 +1396,9 @@ async def get_forecast(
     `truncation_hint` then states the shortfall. A plain call (no hours/days)
     is never reported as truncated.
 
-    Output: current snapshot + hourly + daily forecasts in the station's
-    configured units — read 'units' in the response.
+    Output: current snapshot + hourly + daily forecasts. Read `units` for
+    the units of these values (WeatherFlow returns metric by default, which
+    may differ from the owner's display preference).
 
     Errors:
     - station_not_found — invalid station_id; call tempest_get_stations
@@ -1504,7 +1506,12 @@ async def get_observation(
         bool,
         Field(
             default=False,
-            description="If true, return full response. Default is a condensed summary.",
+            description=(
+                "If true, add secondary fields (heat index, wind chill, wet bulb, "
+                "air density, brightness, station/barometric pressure, final "
+                "precip totals) and station coordinates. Default is a condensed "
+                "summary."
+            ),
         ),
     ] = False,
     ctx: Context | None = None,
@@ -1523,8 +1530,9 @@ async def get_observation(
 
     Workflow: requires station_id from tempest_get_stations.
 
-    Output: current observations in the station's configured units — read
-    'station_units' in the response.
+    Output: current observations. Values are metric/SI — read `units`.
+    `station_units` is the owner's display preference, not the units of the
+    values; convert to it when presenting to the user.
 
     Errors:
     - station_not_found — invalid station_id; call tempest_get_stations

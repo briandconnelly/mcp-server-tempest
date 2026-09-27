@@ -123,7 +123,7 @@ obs = await client.call_tool("tempest_get_observation", {"station_id": 12345})
 current = obs["obs"][0]
 print(f"Temperature: {current['air_temperature']}°")
 print(f"Humidity: {current['relative_humidity']}%")
-print(f"Wind: {current['wind_avg']} {obs['station_units']['units_wind']}")
+print(f"Wind: {current['wind_avg']} {obs['units']['units_wind']}")
 ```
 
 #### `tempest_get_forecast(station_id)`
@@ -168,7 +168,7 @@ station_id = stations["stations"][0]["station_id"]
 # Get current conditions
 obs = await client.call_tool("tempest_get_observation", {"station_id": station_id})
 current = obs["obs"][0]
-units = obs["station_units"]
+units = obs["units"]  # units of the values (metric); station_units is display preference only
 
 print(f"🌡️  Temperature: {current['air_temperature']}°{units['units_temp']}")
 print(f"💧 Humidity: {current['relative_humidity']}%")
