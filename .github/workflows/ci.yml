@@ -33,8 +33,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
       - run: uv sync --group dev
-      - run: uv run ruff check src/ tests/ scripts/
-      - run: uv run ruff format --check src/ tests/ scripts/
+      - run: uv run ruff check src/ tests/ scripts/ skills/
+      - run: uv run ruff format --check src/ tests/ scripts/ skills/
       - name: Type check (ty)
         run: uv run ty check
         continue-on-error: true  # advisory for now; ty still reports pre-existing diagnostics
