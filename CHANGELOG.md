@@ -57,7 +57,9 @@ selection guidance invalidate a cached surface.
   Bad or missing `station_id` routes to `tempest_get_stations`. Unknown
   arguments are reported as `details.unknown_argument` (and all of them, when
   several, as `details.unknown_arguments`) instead of `field`, which now always
-  names a published parameter, and their values are never reflected.
+  names a published parameter, and their values are never reflected. An
+  unknown argument's name is echoed only when it is shaped like a parameter
+  name (lowercase snake_case); otherwise it is reported as `"[redacted]"`.
   `details.error_count` is present when more than one argument error was
   reported. The value-echo policy is disclosed in `error_channel`.
 

@@ -322,3 +322,23 @@ async def test_combined_unknown_and_invalid_drop_uses_invalid_label():
         "tool": "tempest_get_forecast",
         "arguments": {"station_id": 1},
     }
+
+
+async def test_secret_shaped_unknown_argument_name_is_redacted():
+    # Copilot review (PR #125): an unknown argument's *name* is caller-controlled
+    # too. A secret pasted as a key must not be echoed into the error.
+    for secret in (
+        "sk-proj-AbC123xyz",
+        "a3f9c1d2e4b5a6978877665544332211",
+        "sk_live_4ec39hqlyjwdarjtt1zd",
+    ):
+        payload, text = await _call("tempest_get_observation", {"station_id": 1, secret: 1})
+        assert payload["details"]["unknown_argument"] == "[redacted]"
+        assert secret not in text
+        assert payload["repair"]["arguments"] == {"station_id": 1}
+
+
+async def test_parameter_shaped_unknown_argument_name_is_still_reported():
+    # A plausible typo keeps its diagnostic value.
+    payload, _ = await _call("tempest_get_observation", {"station": 1})
+    assert payload["details"]["unknown_argument"] == "station"

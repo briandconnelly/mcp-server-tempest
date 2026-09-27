@@ -9,13 +9,21 @@ onto every tool's input/output schema so strict clients need not infer it.
 """
 
 import logging
+import re
 from collections.abc import Mapping, Sequence
 
 from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from pydantic import TypeAdapter, ValidationError
 
-from .errors import ErrorCode, WeatherFlowError, _new_request_id, list_stations_repair, repair_call
+from .errors import (
+    _REDACTED,
+    ErrorCode,
+    WeatherFlowError,
+    _new_request_id,
+    list_stations_repair,
+    repair_call,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +144,20 @@ def _repair_for(
     return repair_call(next_step, tool_name, args)
 
 
+# An unknown argument's *name* is caller-controlled, so it can carry a pasted
+# secret just like a value can. Echo a name only when it is shaped like a real
+# parameter name (lowercase snake_case, short segments — every published
+# parameter is); anything else is reported as "[redacted]". A plausible typo
+# such as `station` keeps its diagnostic value; `sk-proj-...`, a 32-char hex key,
+# or a token segment longer than 12 characters (published names top out at 7)
+# does not survive.
+_PARAMETER_NAME = re.compile(r"[a-z][a-z0-9]{0,11}(?:_[a-z0-9]{1,12}){0,3}")
+
+
+def _reportable_name(name: str) -> str:
+    return name if _PARAMETER_NAME.fullmatch(name) else _REDACTED
+
+
 def _validation_error_to_weatherflow(
     exc: ValidationError,
     tool_name: str | None = None,
@@ -154,7 +176,7 @@ def _validation_error_to_weatherflow(
     unknown = error_type in _UNKNOWN_ARGUMENT_TYPES
     details: dict = {"validation_type": error_type}
     unknown_names = [
-        n
+        _reportable_name(n)
         for n in (_error_name(e) for e in errors if e.get("type") in _UNKNOWN_ARGUMENT_TYPES)
         if n is not None
     ]

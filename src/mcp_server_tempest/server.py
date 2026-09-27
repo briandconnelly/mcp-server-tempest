@@ -318,9 +318,10 @@ REQUIRED:
 - On an error, branch on `code`. When `repair` is present, call its `tool`
   with its `arguments`. `temporary: true` means the same call may succeed
   after `retry_after_ms` (null: back off).
-- Results may be cached up to WEATHERFLOW_CACHE_TTL (default 300s); pass
-  refresh=true to tempest_get_observation or tempest_get_forecast when the
-  user needs the latest reading.
+- Observation/forecast results may be cached up to WEATHERFLOW_CACHE_TTL
+  (default 300s), station data up to WEATHERFLOW_DISK_CACHE_TTL (default 24h).
+  Pass refresh=true to tempest_get_observation or tempest_get_forecast when
+  the user needs the latest reading.
 
 TOOL SELECTION:
 - "How many / list my stations"              -> tempest_get_stations
@@ -816,7 +817,9 @@ _CAPABILITY_CONTRACT: dict = {
         "step {next_step, tool, arguments}: call `tool` with `arguments` "
         "exactly. `field` always names a published input parameter; an unknown "
         "argument is reported as details.unknown_argument (the first one), and "
-        "several as details.unknown_arguments (all, in order). `value` echoes only "
+        "several as details.unknown_arguments (all, in order); a name not shaped "
+        'like a parameter (lowercase snake_case) is reported as "[redacted]". '
+        "`value` echoes only "
         "numeric/boolean inputs; string inputs and unknown arguments' values are "
         "never reflected, since they may be misplaced secrets. Optional fields are "
         "omitted when absent. `retry_after_ms` is always present when "

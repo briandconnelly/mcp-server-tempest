@@ -1542,6 +1542,13 @@ class TestServerInstructions:
     CLAUDE_CODE_PREFIX_CHARS = 2048
     SENTINEL = "END OF TEMPEST INSTRUCTIONS"
 
+    def test_cache_freshness_rule_covers_disk_cached_station_data(self):
+        # Copilot review (PR #125): station data is disk-cached up to
+        # WEATHERFLOW_DISK_CACHE_TTL (default 24h), not WEATHERFLOW_CACHE_TTL.
+        head = mcp.instructions[: self.CLAUDE_CODE_PREFIX_CHARS]
+        assert "Results may be cached up to WEATHERFLOW_CACHE_TTL" not in head
+        assert "WEATHERFLOW_DISK_CACHE_TTL" in head
+
     def test_sentinel_is_last_line(self):
         assert mcp.instructions.rstrip("\n").splitlines()[-1] == self.SENTINEL
 
