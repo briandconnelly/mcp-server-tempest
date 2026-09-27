@@ -64,20 +64,24 @@ class TestWeatherFlowErrorPayload:
             hint="call get_stations",
             field_name="station_id",
             value=99999,
-            next={"tool": "get_stations"},
+            repair={"next_step": "list_stations", "tool": "get_stations", "arguments": {}},
             details={"upstream_status": 404, "operation": "observation"},
         )
         payload = wfe.to_payload("rid")
         assert payload["hint"] == "call get_stations"
         assert payload["field"] == "station_id"  # JSON key is "field", attr is field_name
         assert payload["value"] == 99999
-        assert payload["next"] == {"tool": "get_stations"}
+        assert payload["repair"] == {
+            "next_step": "list_stations",
+            "tool": "get_stations",
+            "arguments": {},
+        }
         assert payload["details"] == {"upstream_status": 404, "operation": "observation"}
 
     def test_optional_fields_omitted_when_none(self):
         wfe = WeatherFlowError(code=ErrorCode.AUTH_INVALID, message="bad")
         payload = wfe.to_payload("rid")
-        for k in ("hint", "field", "value", "next", "retry_after_ms", "details"):
+        for k in ("hint", "field", "value", "repair", "retry_after_ms", "details"):
             assert k not in payload, f"expected {k!r} omitted"
 
     def test_retry_after_ms_round_trips(self):
@@ -233,7 +237,7 @@ class TestWeatherFlowErrorToolResult:
             hint="call get_stations",
             field_name="station_id",
             value=99999,
-            next={"tool": "get_stations"},
+            repair={"next_step": "list_stations", "tool": "get_stations", "arguments": {}},
             retry_after_ms=None,
             details={"upstream_status": 404, "operation": "observation"},
         )
@@ -243,5 +247,9 @@ class TestWeatherFlowErrorToolResult:
             assert parsed["code"] == "station_not_found"
             assert parsed["field"] == "station_id"
             assert parsed["value"] == 99999
-            assert parsed["next"] == {"tool": "get_stations"}
+            assert parsed["repair"] == {
+                "next_step": "list_stations",
+                "tool": "get_stations",
+                "arguments": {},
+            }
             assert parsed["details"]["operation"] == "observation"

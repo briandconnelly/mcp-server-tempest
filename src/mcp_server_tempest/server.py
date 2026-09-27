@@ -772,15 +772,20 @@ _CAPABILITY_CONTRACT: dict = {
     "error_channel": (
         "Errors arrive as an isError tool result. The JSON envelope — {code, "
         "message, temporary, request_id} plus optional hint, field, value, "
-        "next, retry_after_ms, details — is in `structuredContent`, with an "
+        "repair, retry_after_ms, details — is in `structuredContent`, with an "
         "identical compact-JSON copy in `content[0].text` for clients that "
         "only read text content. Branch on `code` (see error_codes), not "
         "`message`; treat an unrecognized `code` as a generic failure (codes "
-        "are added additively). Optional fields are omitted when absent. "
-        "`retry_after_ms` is always present when `temporary` is true — a "
-        "non-negative integer when the delay is known, else null (retry "
-        "with backoff); it is omitted when `temporary` is false, unless a "
-        "caller explicitly sets one (no error path does today)."
+        "are added additively). `repair`, when present, is one callable next "
+        "step {next_step, tool, arguments}: call `tool` with `arguments` "
+        "exactly. `field` always names a published input parameter; an unknown "
+        "argument is reported as details.unknown_argument. `value` echoes only "
+        "numeric/boolean inputs; string inputs and unknown arguments' values are "
+        "never reflected, since they may be misplaced secrets. Optional fields are "
+        "omitted when absent. `retry_after_ms` is always present when "
+        "`temporary` is true — a non-negative integer when the delay is known, "
+        "else null (retry with backoff); it is omitted when `temporary` is "
+        "false, unless a caller explicitly sets one (no error path does today)."
     ),
     "fingerprint_covers": (
         "Everything an agent can plan against: version, the complete wire "
@@ -1295,8 +1300,7 @@ async def get_stations(
     - rate_limited, upstream_unavailable (temporary; retry, honoring
       retry_after_ms when present)
     - Catalog: tempest_get_capabilities / tempest://capabilities
-      (error_codes, error_channel); hint, when present, carries repair
-      guidance
+      (error_codes, error_channel); follow `repair` when present
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
@@ -1348,8 +1352,7 @@ async def get_station_details(
     - rate_limited, upstream_unavailable (temporary; retry, honoring
       retry_after_ms when present)
     - Catalog: tempest_get_capabilities / tempest://capabilities
-      (error_codes, error_channel); hint, when present, carries repair
-      guidance
+      (error_codes, error_channel); follow `repair` when present
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
@@ -1454,8 +1457,7 @@ async def get_forecast(
     - rate_limited, upstream_unavailable (temporary; retry, honoring
       retry_after_ms when present)
     - Catalog: tempest_get_capabilities / tempest://capabilities
-      (error_codes, error_channel); hint, when present, carries repair
-      guidance
+      (error_codes, error_channel); follow `repair` when present
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
@@ -1601,8 +1603,7 @@ async def get_observation(
     - rate_limited, upstream_unavailable (temporary; retry, honoring
       retry_after_ms when present)
     - Catalog: tempest_get_capabilities / tempest://capabilities
-      (error_codes, error_channel); hint, when present, carries repair
-      guidance
+      (error_codes, error_channel); follow `repair` when present
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.

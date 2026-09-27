@@ -39,6 +39,17 @@ selection guidance invalidate a cached surface.
 
 ### Changed
 
+- **Error envelope: `next` is replaced by a callable `repair` object
+  (breaking, pre-1.0).** `repair` is `{next_step, tool, arguments}`: call
+  `tool` with `arguments` exactly. `invalid_argument` errors now carry a repair
+  that preserves every still-valid argument with the minimal correction (e.g.
+  `hours: 100` → `48`), fixing every reported argument error in one retry;
+  bad or missing `station_id` routes to
+  `tempest_get_stations`. Unknown arguments are reported as
+  `details.unknown_argument` instead of `field`, which now always names a
+  published parameter, and their values are never reflected. The value-echo
+  policy is disclosed in `error_channel`.
+
 - **FastMCP 4 / MCP Python SDK v2.** Requires `fastmcp>=4.0.5,<5`, `mcp>=2.2,<3`,
   and `mcp-types>=2.2,<3` (the latter two now declared directly, since the
   server imports them), and `pydantic>=2.12` (FastMCP 4's floor). The server now

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from mcp_server_tempest.errors import ErrorCode, WeatherFlowError
+from mcp_server_tempest.errors import ErrorCode, WeatherFlowError, list_stations_repair
 from mcp_server_tempest.rest import (
     _STATION_SCOPED,
     _retry_after_ms,
@@ -137,21 +137,21 @@ class TestTranslateResponseError:
             assert "tempestwx.com/settings/tokens" in wfe.hint
             assert wfe.details["upstream_status"] == 401
             assert wfe.details["operation"] == op
-            assert wfe.next is None
+            assert wfe.repair is None
 
     def test_403_station_scoped_recommends_get_stations(self):
         e = _make_response_error(403)
         for op in _STATION_SCOPED:
             wfe = _translate_response_error(e, operation=op)
             assert wfe.code is ErrorCode.AUTH_FORBIDDEN
-            assert wfe.next == {"tool": "tempest_get_stations"}
+            assert wfe.repair == list_stations_repair()
             assert "station" in wfe.message.lower()
 
     def test_403_stations_op_no_next(self):
         e = _make_response_error(403)
         wfe = _translate_response_error(e, operation="stations")
         assert wfe.code is ErrorCode.AUTH_FORBIDDEN
-        assert wfe.next is None
+        assert wfe.repair is None
         assert "scope" in wfe.hint.lower()
 
     def test_404_station_scoped_is_station_not_found(self):
@@ -161,7 +161,7 @@ class TestTranslateResponseError:
             assert wfe.code is ErrorCode.STATION_NOT_FOUND
             assert wfe.field_name == "station_id"
             assert wfe.value == 12345
-            assert wfe.next == {"tool": "tempest_get_stations"}
+            assert wfe.repair == list_stations_repair()
 
     def test_404_stations_op_is_invalid_response(self):
         # 404 on the /stations endpoint isn't "no such station" — it's an
@@ -344,7 +344,7 @@ class TestApiGetForecastErrorMapping:
             with pytest.raises(WeatherFlowError) as excinfo:
                 await api_get_forecast(12345, "fake-token")
             assert excinfo.value.code is ErrorCode.AUTH_FORBIDDEN
-            assert excinfo.value.next == {"tool": "tempest_get_stations"}
+            assert excinfo.value.repair == list_stations_repair()
 
 
 class TestSessionLifecycle:
