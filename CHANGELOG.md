@@ -113,6 +113,25 @@ selection guidance invalidate a cached surface.
 
 ### Fixed
 
+- **Observation values were labeled with the wrong units (critical).**
+  `tempest_get_observation` returns metric/SI values, but the instructions,
+  tool description, and README told agents to read them with `station_units`,
+  which is only the owner's display preference, so an imperial-preference
+  station's 12.5 °C read as 12.5 °F. Observation results now carry a `units`
+  object describing the values; `station_units` is documented as preference
+  only. The forecast description no longer claims station-configured units:
+  read its `units` object.
+
+- **README examples now run.** Every Python example called
+  `client.call_tool(...)` on an undefined `client` and indexed the returned
+  `CallToolResult` like a dict (`TypeError`). Examples now set up a FastMCP
+  client and read `.structured_content`, and `tests/test_readme.py` executes
+  every README Python block against the in-process server. The README also
+  gains what the server does not do, all five tools with their arguments,
+  how to read units, times, and errors, a corrected device-status example,
+  station-local forecast hours, and a Contributing section that defers to
+  AGENTS.md.
+
 - **`python -OO` no longer serves a catalog agents cannot select from.** Tool
   descriptions come from docstrings, which `-OO` discards, so an optimized run
   previously started normally and served all five tools with no description at
@@ -153,14 +172,7 @@ selection guidance invalidate a cached surface.
   schema, where `detailed` was documented as "controls density only" while
   `hours` and `days` were documented as returning "all available in detailed
   mode".
-- **Observation values were labeled with the wrong units (critical).**
-  `tempest_get_observation` returns metric/SI values, but the instructions,
-  tool description, and README told agents to read them with `station_units`,
-  which is only the owner's display preference, so an imperial-preference
-  station's 12.5 °C read as 12.5 °F. Observation results now carry a `units`
-  object describing the values; `station_units` is documented as preference
-  only. The forecast description no longer claims station-configured units:
-  read its `units` object.
+
 - Native serverInfo.version now reports the package version instead of FastMCP's.
 
 ## [0.10.0] - 2026-07-02
