@@ -6,9 +6,29 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    # Group identifiers appear in the PR title, which squash-merges into the
+    # commit subject — keep them lowercase/hyphenated so the result stays a
+    # valid Conventional Commit.
     groups:
       python-dev:
         dependency-type: "development"
+      python-runtime:
+        dependency-type: "production"
+      # Groups apply only to scheduled version updates unless opted in, so
+      # security bumps (often transitive, e.g. aiohttp/cryptography) would
+      # otherwise each arrive as a separate PR.
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    # pyproject.toml caps fastmcp below the next major. Widening the cap is a
+    # hand-written upgrade PR, so Dependabot is told not to propose the major
+    # that would move it; minor/patch releases inside the cap still arrive
+    # through the python-runtime group.
+    ignore:
+      - dependency-name: "fastmcp"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions (keeps the SHA pins current)
   - package-ecosystem: "github-actions"
@@ -16,7 +36,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(ci)"
+    # Majors are deliberately outside the group: each arrives as its own PR,
+    # so a breaking Action major can be evaluated (and held) without blocking
+    # the safe minor/patch bumps batched alongside it.
     groups:
-      actions:
-        patterns:
-          - "*"
+      github-actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
