@@ -228,3 +228,97 @@ async def test_numeric_unknown_argument_value_not_reflected():
         "tool": "tempest_get_capabilities",
         "arguments": {},
     }
+
+
+async def test_repair_keeps_lax_coerced_required_argument_typed():
+    # F-1: station_id "1" passed lax validation; dropping it would hand the
+    # agent a retry certain to fail on the missing required argument.
+    payload, _ = await _call("tempest_get_forecast", {"station_id": "1", "hours": 100})
+    assert payload["repair"] == {
+        "next_step": "retry_with_corrected_arguments",
+        "tool": "tempest_get_forecast",
+        "arguments": {"station_id": 1, "hours": 48},
+    }
+    assert isinstance(payload["repair"]["arguments"]["station_id"], int)
+
+
+async def test_repair_keeps_lax_coerced_boolean_argument():
+    payload, _ = await _call(
+        "tempest_get_forecast", {"station_id": 1, "hours": 100, "detailed": "true"}
+    )
+    assert payload["repair"]["arguments"] == {"station_id": 1, "hours": 48, "detailed": True}
+
+
+async def test_repair_with_bound_correction_never_carries_secret_unknown_argument():
+    # Review Focus #1, riskiest variant: a bound correction plus a secret in
+    # an unknown argument, in either argument order.
+    secret = "sk-super-secret-value"
+    for args in (
+        {"station_id": 1, "hours": 100, "api_token": secret},
+        {"api_token": secret, "station_id": 1, "hours": 100},
+    ):
+        payload, text = await _call("tempest_get_forecast", args)
+        assert secret not in text
+        assert payload["repair"]["arguments"] == {"station_id": 1, "hours": 48}
+        assert payload["details"]["unknown_argument"] == "api_token"
+
+
+async def test_every_unknown_argument_is_reported():
+    # F-2: the unknown arguments are not the first error.
+    payload, _ = await _call(
+        "tempest_get_forecast", {"station_id": 1, "days": 100, "bogus": 2, "other": 3}
+    )
+    assert payload["details"]["unknown_argument"] == "bogus"
+    assert payload["details"]["unknown_arguments"] == ["bogus", "other"]
+    assert payload["repair"]["arguments"] == {"station_id": 1, "days": 10}
+    assert payload.get("value") not in (2, 3)
+
+
+async def test_single_unknown_argument_has_no_unknown_arguments_list():
+    payload, _ = await _call("tempest_get_observation", {"station_id": 1, "bogus": 2})
+    assert payload["details"]["unknown_argument"] == "bogus"
+    assert "unknown_arguments" not in payload["details"]
+
+
+def test_no_repair_when_required_parameter_would_be_missing():
+    # F-1 safety net: a repair certain to fail is worse than none.
+    from mcp_server_tempest.middleware import _repair_for
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "station_id": {"type": "integer", "exclusiveMinimum": 0},
+            "hours": {
+                "anyOf": [{"type": "integer", "minimum": 1, "maximum": 48}, {"type": "null"}]
+            },
+        },
+        "required": ["station_id"],
+    }
+    errors = [{"type": "less_than_equal", "loc": ("hours",), "ctx": {"le": 48}, "input": 100}]
+    # station_id carries a value the published type cannot coerce, so it
+    # cannot be preserved.
+    assert (
+        _repair_for(errors, "tempest_get_forecast", {"station_id": "x", "hours": 100}, schema)
+        is None
+    )
+    assert _repair_for(errors, "tempest_get_forecast", {"hours": 100}, schema) is None
+    # Control: the same call with a preservable station_id does get a repair.
+    assert _repair_for(
+        errors, "tempest_get_forecast", {"station_id": "7", "hours": 100}, schema
+    ) == {
+        "next_step": "retry_with_corrected_arguments",
+        "tool": "tempest_get_forecast",
+        "arguments": {"station_id": 7, "hours": 48},
+    }
+
+
+async def test_combined_unknown_and_invalid_drop_uses_invalid_label():
+    # F-3
+    payload, _ = await _call(
+        "tempest_get_forecast", {"station_id": 1, "detailed": "maybe", "zzz": 2}
+    )
+    assert payload["repair"] == {
+        "next_step": "retry_without_invalid_arguments",
+        "tool": "tempest_get_forecast",
+        "arguments": {"station_id": 1},
+    }

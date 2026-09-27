@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 
 from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from fastmcp.server.middleware import Middleware, MiddlewareContext
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from .errors import ErrorCode, WeatherFlowError, _new_request_id, list_stations_repair, repair_call
 
@@ -45,63 +45,107 @@ def _error_name(err: Mapping) -> str | None:
     return str(loc[-1]) if loc else None
 
 
+_SCALAR_ADAPTERS: dict[str, TypeAdapter] = {
+    "integer": TypeAdapter(int),
+    "boolean": TypeAdapter(bool),
+    "number": TypeAdapter(float),
+}
+
+
+def _typed_value(prop: object, value: object) -> int | float | bool | None:
+    """The caller's value in the typed form the tool validated it into, or
+    None when that form is unknown.
+
+    Pydantic validates tool inputs in lax mode, so a still-valid argument may
+    arrive as a string ("1", "true"). It is re-coerced through the published
+    property's scalar type — the same lax coercion that accepted it — so the
+    repair preserves it typed. The result is never a string: a value that
+    passed int/bool/float validation is digits or a bool, never secret text.
+    """
+    if not isinstance(prop, Mapping):
+        return None
+    members = prop.get("anyOf")
+    if not isinstance(members, list):
+        members = [prop]
+    types = {m.get("type") for m in members if isinstance(m, Mapping)} - {"null"}
+    if len(types) != 1:
+        return None
+    adapter = _SCALAR_ADAPTERS.get(str(next(iter(types))))
+    if adapter is None:
+        return None
+    try:
+        typed = adapter.validate_python(value)
+    except ValidationError:
+        return None
+    return typed if isinstance(typed, (int, float)) else None
+
+
 def _repair_for(
     errors: Sequence[Mapping],
     tool_name: str,
-    arguments: dict,
-    published: frozenset[str] | None,
+    arguments: Mapping,
+    schema: Mapping | None,
 ) -> dict | None:
     """One callable corrective call that fixes every reported error at once
     and preserves the caller's intent.
 
     Pydantic reports all argument errors together (verified: hours=100 with
     days=0 yields both), so the retry corrects or drops *each* offending
-    argument. The rest are the caller's still-valid, non-sensitive originals:
-    published parameters with numeric/bool values. Returns None when no
-    faithful repair can be built (published parameters unknown).
+    argument. The rest are the caller's still-valid originals, normalised to
+    their published scalar type. Returns None when no faithful repair can be
+    built: the published input schema is unknown, or a required parameter
+    could not be preserved (a repair certain to fail is worse than none).
     """
     names = [_error_name(e) for e in errors]
     unknown = [e.get("type") in _UNKNOWN_ARGUMENT_TYPES for e in errors]
     if any(n == "station_id" and not u for n, u in zip(names, unknown)):
         # A bad or missing station_id must be discovered, not corrected.
         return list_stations_repair()
-    if published is None:
+    if schema is None:
         return None
+    properties = schema.get("properties") or {}
     offending = {n for n in names if n is not None}
-    args = {
-        k: v
-        for k, v in arguments.items()
-        if k in published and k not in offending and isinstance(v, (int, float))
-    }
+    args: dict = {}
+    for k, v in arguments.items():
+        if k in properties and k not in offending and v is not None:
+            typed = _typed_value(properties[k], v)
+            if typed is not None:
+                args[k] = typed
     corrected = False
+    dropped_invalid = False
     for err, name, is_unknown in zip(errors, names, unknown):
-        if is_unknown or name is None or name not in published:
+        if is_unknown or name is None or name not in properties:
             continue  # unknown arguments are dropped
         ctx = err.get("ctx") or {}
         bound = next((ctx[k] for k in _BOUND_KEYS if isinstance(ctx.get(k), int)), None)
         if bound is not None:
             args[name] = bound  # clamp to the nearest valid value
             corrected = True
-        # else: an optional argument with an unusable value is omitted, so the
-        # server applies its default
+        else:
+            # an optional argument with an unusable value is omitted, so the
+            # server applies its default
+            dropped_invalid = True
+    if any(r not in args for r in schema.get("required") or ()):
+        return None
     if corrected:
         next_step = "retry_with_corrected_arguments"
-    elif any(unknown):
-        next_step = "retry_without_unknown_arguments"
-    else:
+    elif dropped_invalid or not any(unknown):
         next_step = "retry_without_invalid_arguments"
+    else:
+        next_step = "retry_without_unknown_arguments"
     return repair_call(next_step, tool_name, args)
 
 
 def _validation_error_to_weatherflow(
     exc: ValidationError,
     tool_name: str | None = None,
-    arguments: dict | None = None,
-    published: frozenset[str] | None = None,
+    arguments: Mapping | None = None,
+    schema: Mapping | None = None,
 ) -> WeatherFlowError:
     """Map Pydantic errors to one structured invalid_argument error.
 
-    The first error supplies message/field/value; the repair covers all of them.
+    The first error supplies message/field/value; the repair covers all of
+    them, and every unknown argument is named in details.
     """
     errors = exc.errors(include_url=False)
     first = errors[0]
@@ -109,13 +153,20 @@ def _validation_error_to_weatherflow(
     error_type = first.get("type")
     unknown = error_type in _UNKNOWN_ARGUMENT_TYPES
     details: dict = {"validation_type": error_type}
-    if unknown and name is not None:
-        details["unknown_argument"] = name
+    unknown_names = [
+        n
+        for n in (_error_name(e) for e in errors if e.get("type") in _UNKNOWN_ARGUMENT_TYPES)
+        if n is not None
+    ]
+    if unknown_names:
+        details["unknown_argument"] = unknown_names[0]
+    if len(unknown_names) > 1:
+        details["unknown_arguments"] = unknown_names
     if len(errors) > 1:
         details["error_count"] = len(errors)
     repair = None
     if tool_name is not None:
-        repair = _repair_for(errors, tool_name, arguments or {}, published)
+        repair = _repair_for(errors, tool_name, arguments or {}, schema)
     return WeatherFlowError(
         code=ErrorCode.INVALID_ARGUMENT,
         message=first.get("msg", "Invalid argument."),
@@ -127,16 +178,15 @@ def _validation_error_to_weatherflow(
     )
 
 
-async def _published_params(
-    context: MiddlewareContext, tool_name: str | None
-) -> frozenset[str] | None:
-    """The failing tool's published input parameters, or None if unavailable."""
+async def _published_params(context: MiddlewareContext, tool_name: str | None) -> Mapping | None:
+    """The failing tool's published input schema (properties + required),
+    or None if unavailable."""
     if tool_name is None or context.fastmcp_context is None:
         return None
     tool = await context.fastmcp_context.fastmcp.get_tool(tool_name)
     if tool is None:
         return None
-    return frozenset((tool.parameters or {}).get("properties", {}))
+    return tool.parameters or {}
 
 
 class TempestContractMiddleware(Middleware):
@@ -159,8 +209,8 @@ class TempestContractMiddleware(Middleware):
         rid = _new_request_id()
         tool_name = getattr(context.message, "name", None)
         arguments = getattr(context.message, "arguments", None) or {}
-        published = await _published_params(context, tool_name)
-        wfe = _validation_error_to_weatherflow(exc, tool_name, arguments, published)
+        schema = await _published_params(context, tool_name)
+        wfe = _validation_error_to_weatherflow(exc, tool_name, arguments, schema)
         logger.warning("rid=%s code=%s field=%s", rid, wfe.code.value, wfe.field_name)
         return wfe.to_tool_result(rid)
 

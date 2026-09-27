@@ -275,3 +275,13 @@ def test_fingerprint_is_deterministic_across_reload():
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().startswith("sha256:")
+
+
+def test_capability_contract_states_units_and_server_timestamps():
+    # F-4
+    from mcp_server_tempest.server import _CAPABILITY_CONTRACT
+
+    assert "station_units" in _CAPABILITY_CONTRACT["units"]
+    assert "observed_at" in _CAPABILITY_CONTRACT["timestamps"]
+    assert "retrieved_at" in _CAPABILITY_CONTRACT["timestamps"]
+    assert "unknown_arguments" in _CAPABILITY_CONTRACT["error_channel"]

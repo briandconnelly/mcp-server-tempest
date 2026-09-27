@@ -815,7 +815,8 @@ _CAPABILITY_CONTRACT: dict = {
         "are added additively). `repair`, when present, is one callable next "
         "step {next_step, tool, arguments}: call `tool` with `arguments` "
         "exactly. `field` always names a published input parameter; an unknown "
-        "argument is reported as details.unknown_argument. `value` echoes only "
+        "argument is reported as details.unknown_argument (the first one), and "
+        "several as details.unknown_arguments (all, in order). `value` echoes only "
         "numeric/boolean inputs; string inputs and unknown arguments' values are "
         "never reflected, since they may be misplaced secrets. Optional fields are "
         "omitted when absent. `retry_after_ms` is always present when "
@@ -844,8 +845,16 @@ _CAPABILITY_CONTRACT: dict = {
     "timestamps": (
         "Upstream weather timestamps are Unix epoch seconds, as provided by "
         "WeatherFlow; interpret local-time fields with the station's IANA "
-        "`timezone`. Server-generated timestamps (e.g. ts_retrieved in "
-        '_meta["net.bconnelly.tempest/fetch"]) are RFC3339 UTC.'
+        "`timezone`. Server-generated timestamps are RFC3339 UTC: `observed_at` "
+        "and `lightning_strike_last_at` on observation entries, `retrieved_at` "
+        "on every fetching tool's result, and ts_retrieved in "
+        '_meta["net.bconnelly.tempest/fetch"].'
+    ),
+    "units": (
+        "Observation values are metric/SI, described by the result's `units` "
+        "object; forecast values are described by the forecast result's own "
+        "`units`; `station_units` is the owner's display preference, not the "
+        "units of the values."
     ),
     "caching": (
         "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for every tool that "
