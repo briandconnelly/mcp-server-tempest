@@ -8,7 +8,7 @@ import aiohttp
 from marshmallow.exceptions import MarshmallowError
 from weatherflow4py.api import WeatherFlowRestAPI
 
-from .errors import ErrorCode, WeatherFlowError
+from .errors import ErrorCode, WeatherFlowError, list_stations_repair
 
 # Total per-request budget for an upstream WeatherFlow call. weatherflow4py
 # creates its own aiohttp session with NO timeout (aiohttp would otherwise
@@ -110,7 +110,7 @@ def _translate_response_error(
                 code=ErrorCode.AUTH_FORBIDDEN,
                 message="Token does not have access to this station.",
                 hint="Verify station ownership.",
-                next={"tool": "tempest_get_stations"},
+                repair=list_stations_repair(),
                 details={"upstream_status": 403, "operation": operation},
             )
         return WeatherFlowError(
@@ -127,7 +127,7 @@ def _translate_response_error(
                 hint="Call tempest_get_stations to list valid station_ids.",
                 field_name="station_id",
                 value=station_id,
-                next={"tool": "tempest_get_stations"},
+                repair=list_stations_repair(),
                 details={"upstream_status": 404, "operation": operation},
             )
         return WeatherFlowError(
@@ -199,7 +199,7 @@ async def api_get_station_id(station_id: int, token: str) -> dict:
                     hint="Call tempest_get_stations to list valid station_ids.",
                     field_name="station_id",
                     value=station_id,
-                    next={"tool": "tempest_get_stations"},
+                    repair=list_stations_repair(),
                     # No upstream_status — the API returned 200 with an empty list.
                     details={"operation": "station"},
                 )

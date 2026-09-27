@@ -293,8 +293,42 @@ async def lifespan(server: FastMCP) -> AsyncIterator[None]:
 
 
 _INSTRUCTIONS = """\
-WeatherFlow Tempest — read-only access to a user's personal Tempest weather
+WeatherFlow Tempest — read-only access to the user's own Tempest weather
 station(s). Not a global weather service.
+Completeness check: this text ends with the line END OF TEMPEST INSTRUCTIONS.
+If your copy does not, read tempest://capabilities (or call
+tempest_get_capabilities) for the full contract.
+
+DO NOT USE for:
+- Locations away from the user's station, or general/global weather —
+  use a public weather API
+- Air quality, pollen, smoke index — not provided
+- Severe-weather alerts, radar imagery, watches/warnings — not provided
+- Historical analysis beyond what the live API returns (no archive)
+
+REQUIRED:
+- Never guess a station_id. Without one, call tempest_get_stations first;
+  if it returns exactly one station, use it without asking.
+- Read the `units` object on each observation/forecast result: it describes
+  the values (observations are always metric). `station_units` is the owner's
+  display preference, NOT the units of the values: convert to it when
+  presenting. Never assume °F/mph.
+- Prefer the RFC3339 fields (observed_at, lightning_strike_last_at,
+  retrieved_at) over raw epoch seconds for times and ages.
+- On an error, branch on `code`. When `repair` is present, call its `tool`
+  with its `arguments`. `temporary: true` means the same call may succeed
+  after `retry_after_ms` (null: back off).
+- Observation/forecast results may be cached up to WEATHERFLOW_CACHE_TTL
+  (default 300s), station data up to WEATHERFLOW_DISK_CACHE_TTL (default 24h).
+  Pass refresh=true to tempest_get_observation or tempest_get_forecast when
+  the user needs the latest reading.
+
+TOOL SELECTION:
+- "How many / list my stations"              -> tempest_get_stations
+- "What can my station measure / hardware"   -> tempest_get_station_details(station_id)
+- "Current conditions / right now"           -> tempest_get_observation(station_id)
+- "Forecast / later / tomorrow / this week"  -> tempest_get_forecast(station_id)
+- "What can this server do"                  -> tempest_get_capabilities
 
 USE THIS SERVER when the user asks about:
 - Current conditions on their station ("is it raining", "how warm is it",
@@ -304,30 +338,13 @@ USE THIS SERVER when the user asks about:
 - Station inventory, location, devices ("what stations do I have", "where
   is my station", "elevation", "what timezone")
 
-DO NOT USE for:
-- Locations away from the user's station, or general/global weather —
-  use a public weather API
-- Air quality, pollen, smoke index — not provided
-- Severe-weather alerts, radar imagery, watches/warnings — not provided
-- Historical analysis beyond what the live API returns (no archive)
-
-TOOL SELECTION:
-- "How many / list my stations"              -> tempest_get_stations
-- "Deeper config / hardware for one station" -> tempest_get_station_details(station_id)
-- "Current conditions / right now"           -> tempest_get_observation(station_id)
-- "Forecast / later / tomorrow / this week"  -> tempest_get_forecast(station_id)
-- "What can this server do"                  -> tempest_get_capabilities
-
 NOTES:
-- Units follow each station's config — read 'station_units' / 'units' fields.
-  Never assume °F vs °C or mph vs km/h.
 - tempest_get_stations returns devices but NOT sensor capabilities (upstream
-  omits them from the station list, so the field is absent from its schema
-  and its responses). For "what can my station measure", call
-  tempest_get_station_details(station_id) — it is the only tool that returns
-  the `capabilities` list.
-- tempest_get_forecast also returns a current snapshot, but tempest_get_observation is
-  lighter for current-only questions.
+  omits them from the station list). For "what can my station measure", call
+  tempest_get_station_details(station_id) — the only tool that returns the
+  `capabilities` list.
+- tempest_get_forecast also returns a current snapshot, but
+  tempest_get_observation is lighter for current-only questions.
 - tempest_get_forecast returns 6 hourly / 2 daily unless you pass hours/days.
   Entry counts come from hours/days alone; detailed=True adds field density
   (null fields, station coordinates) and never changes how many entries come
@@ -339,17 +356,16 @@ AMBIENT STATE (affects freshness and cache repair):
   (default 100): in-memory cache used by every tool that fetches upstream
   (tempest_get_capabilities is static and uses no cache).
 - WEATHERFLOW_DISK_CACHE_TTL (default 86400s): disk cache for
-  tempest_get_stations and tempest_get_station_details only. Survives restarts; per-token
-  subdirectory (hash-keyed for account isolation) under
+  tempest_get_stations and tempest_get_station_details only. Survives
+  restarts; per-token subdirectory (hash-keyed for account isolation) under
   platformdirs.user_cache_dir("mcp-server-tempest").
-- To force fresh data: restart the server (clears in-memory) or delete
-  the cache directory above (clears disk).
+- refresh=true bypasses the cache for observation/forecast. Station data has
+  no refresh argument: restart the server (clears in-memory) or delete the
+  cache directory above (clears disk).
 
 TYPICAL WORKFLOW:
-1. If you don't already have a station_id, call tempest_get_stations first.
-   Station ids are not guessable — don't fabricate one.
-2. Then tempest_get_observation(station_id) or tempest_get_forecast(station_id).
-   If tempest_get_stations returned one station, use it without asking.
+1. tempest_get_stations (skip if you already hold a station_id).
+2. tempest_get_observation(station_id) or tempest_get_forecast(station_id).
 
 SETUP (required):
 - WEATHERFLOW_API_TOKEN — get one at https://tempestwx.com/settings/tokens.
@@ -372,6 +388,7 @@ accepts {accepted_revisions}. The revision in force is the one negotiated for
 your connection — via server/discover on sessionless revisions (2026-07-28 and
 later), or InitializeResult.protocolVersion on handshake-era revisions — and
 that value, not this line, is authoritative.
+END OF TEMPEST INSTRUCTIONS
 """.format(
     version=_PKG_VERSION,
     protocol_target=_AUTHORED_PROTOCOL_TARGET,
@@ -381,6 +398,7 @@ that value, not this line, is authoritative.
 # Create the MCP server
 mcp = FastMCP(
     name="WeatherFlow Tempest",
+    version=_PKG_VERSION,
     instructions=_INSTRUCTIONS,
     lifespan=lifespan,
     on_duplicate="error",
@@ -464,6 +482,25 @@ def _strip_titles(obj: Any) -> None:
     elif isinstance(obj, list):
         for item in obj:
             _strip_titles(item)
+
+
+def _strip_examples(obj: Any) -> None:
+    """Recursively delete every JSON Schema ``examples`` *keyword*.
+
+    Pydantic copies ``Field(examples=[...])`` into the published output
+    schema; examples carry no validation semantics and cost bytes on every
+    ``tools/list`` (measured 482 bytes, 2026-09-27). The keyword's value is a
+    list, so guarding on ``list`` preserves a property literally named
+    ``examples`` (whose value is a schema dict).
+    """
+    if isinstance(obj, dict):
+        if isinstance(obj.get("examples"), list):
+            del obj["examples"]
+        for value in obj.values():
+            _strip_examples(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            _strip_examples(item)
 
 
 def _refs_in(obj: Any) -> set[str]:
@@ -570,6 +607,7 @@ def _relaxed_schema(
 
     _prune_unreferenced_defs(schema)
     _strip_titles(schema)
+    _strip_examples(schema)
     _lock_additional_properties(schema)
 
     # Stamp the dialect at generation time (not only via the on_list_tools
@@ -588,61 +626,93 @@ def _relaxed_schema(
 # and tempest_get_station_details genuinely returns it. Dropping the property
 # orphans the StationCapability definition, which _prune_unreferenced_defs
 # then removes from this schema only.
-_STATIONS_SCHEMA = _relaxed_schema(
-    StationsResponse,
-    {
-        "WeatherStation": {
-            "created_epoch",
-            "last_modified_epoch",
+_RETRIEVED_AT_SCHEMA: dict = {
+    "type": "string",
+    "format": "date-time",
+    "description": (
+        "RFC3339 UTC time this server fetched the data from WeatherFlow; it may "
+        "have been served from cache since. Omitted when unknown."
+    ),
+}
+
+
+def _with_retrieved_at(schema: dict) -> dict:
+    """Advertise the optional top-level `retrieved_at` a fetching tool adds."""
+    schema["properties"]["retrieved_at"] = dict(_RETRIEVED_AT_SCHEMA)
+    return schema
+
+
+def _stamp_retrieved_at(result: dict, fetched: Fetched) -> dict:
+    iso = _iso(fetched.ts_epoch)
+    if iso is not None:
+        result["retrieved_at"] = iso
+    return result
+
+
+_STATIONS_SCHEMA = _with_retrieved_at(
+    _relaxed_schema(
+        StationsResponse,
+        {
+            "WeatherStation": {
+                "created_epoch",
+                "last_modified_epoch",
+            },
+            "StationMeta": {"share_with_wf", "share_with_wu"},
+            "StationItem": {"station_item_id", "location_id", "location_item_id"},
         },
-        "StationMeta": {"share_with_wf", "share_with_wu"},
-        "StationItem": {"station_item_id", "location_id", "location_item_id"},
-    },
-    omitted_fields={"WeatherStation": {"capabilities"}},
+        omitted_fields={"WeatherStation": {"capabilities"}},
+    )
 )
 
-_STATION_SCHEMA = _relaxed_schema(
-    StationResponse,
-    {
-        "$root": {"created_epoch", "last_modified_epoch"},
-        "StationMeta": {"share_with_wf", "share_with_wu"},
-        "StationItem": {"station_item_id", "location_id", "location_item_id"},
-        "StationCapability": {"device_id", "agl", "show_precip_final"},
-    },
-)
-
-_FORECAST_SCHEMA = _relaxed_schema(
-    ForecastResponse,
-    {
-        "$root": {"latitude", "longitude", "timezone_offset_minutes"},
-        "CurrentConditions": {"icon"},
-        "DailyForecast": {"icon", "precip_icon"},
-        "HourlyForecast": {"icon"},
-    },
-)
-
-_OBSERVATION_SCHEMA = _relaxed_schema(
-    ObservationResponse,
-    {
-        "$root": {"outdoor_keys", "latitude", "longitude", "elevation", "is_public"},
-        "WeatherObservation": {
-            "barometric_pressure",
-            "station_pressure",
-            "heat_index",
-            "wind_chill",
-            "wet_bulb_temperature",
-            "wet_bulb_globe_temperature",
-            "delta_t",
-            "air_density",
-            "brightness",
-            "precip_accum_local_day_final",
-            "precip_accum_local_yesterday_final",
-            "precip_analysis_type_yesterday",
-            "precip_minutes_local_day",
-            "precip_minutes_local_yesterday",
-            "precip_minutes_local_yesterday_final",
+_STATION_SCHEMA = _with_retrieved_at(
+    _relaxed_schema(
+        StationResponse,
+        {
+            "$root": {"created_epoch", "last_modified_epoch"},
+            "StationMeta": {"share_with_wf", "share_with_wu"},
+            "StationItem": {"station_item_id", "location_id", "location_item_id"},
+            "StationCapability": {"device_id", "agl", "show_precip_final"},
         },
-    },
+    )
+)
+
+_FORECAST_SCHEMA = _with_retrieved_at(
+    _relaxed_schema(
+        ForecastResponse,
+        {
+            "$root": {"latitude", "longitude", "timezone_offset_minutes"},
+            "CurrentConditions": {"icon"},
+            "DailyForecast": {"icon", "precip_icon"},
+            "HourlyForecast": {"icon"},
+        },
+    )
+)
+
+_OBSERVATION_SCHEMA = _with_retrieved_at(
+    _relaxed_schema(
+        ObservationResponse,
+        {
+            "$root": {"outdoor_keys", "latitude", "longitude", "elevation", "is_public"},
+            "WeatherObservation": {
+                "barometric_pressure",
+                "station_pressure",
+                "heat_index",
+                "wind_chill",
+                "wet_bulb_temperature",
+                "wet_bulb_globe_temperature",
+                "delta_t",
+                "air_density",
+                "brightness",
+                "precip_accum_local_day_final",
+                "precip_accum_local_yesterday_final",
+                "precip_analysis_type_yesterday",
+                "precip_minutes_local_day",
+                "precip_minutes_local_yesterday",
+                "precip_minutes_local_yesterday_final",
+                "lightning_strike_last_at",
+            },
+        },
+    )
 )
 
 
@@ -739,15 +809,23 @@ _CAPABILITY_CONTRACT: dict = {
     "error_channel": (
         "Errors arrive as an isError tool result. The JSON envelope — {code, "
         "message, temporary, request_id} plus optional hint, field, value, "
-        "next, retry_after_ms, details — is in `structuredContent`, with an "
+        "repair, retry_after_ms, details — is in `structuredContent`, with an "
         "identical compact-JSON copy in `content[0].text` for clients that "
         "only read text content. Branch on `code` (see error_codes), not "
         "`message`; treat an unrecognized `code` as a generic failure (codes "
-        "are added additively). Optional fields are omitted when absent. "
-        "`retry_after_ms` is always present when `temporary` is true — a "
-        "non-negative integer when the delay is known, else null (retry "
-        "with backoff); it is omitted when `temporary` is false, unless a "
-        "caller explicitly sets one (no error path does today)."
+        "are added additively). `repair`, when present, is one callable next "
+        "step {next_step, tool, arguments}: call `tool` with `arguments` "
+        "exactly. `field` always names a published input parameter; an unknown "
+        "argument is reported as details.unknown_argument (the first one), and "
+        "several as details.unknown_arguments (all, in order); a name not shaped "
+        'like a parameter (lowercase snake_case) is reported as "[redacted]". '
+        "`value` echoes only "
+        "numeric/boolean inputs; string inputs and unknown arguments' values are "
+        "never reflected, since they may be misplaced secrets. Optional fields are "
+        "omitted when absent. `retry_after_ms` is always present when "
+        "`temporary` is true — a non-negative integer when the delay is known, "
+        "else null (retry with backoff); it is omitted when `temporary` is "
+        "false, unless a caller explicitly sets one (no error path does today)."
     ),
     "fingerprint_covers": (
         "Everything an agent can plan against: version, the complete wire "
@@ -770,8 +848,16 @@ _CAPABILITY_CONTRACT: dict = {
     "timestamps": (
         "Upstream weather timestamps are Unix epoch seconds, as provided by "
         "WeatherFlow; interpret local-time fields with the station's IANA "
-        "`timezone`. Server-generated timestamps (e.g. ts_retrieved in "
-        '_meta["net.bconnelly.tempest/fetch"]) are RFC3339 UTC.'
+        "`timezone`. Server-generated timestamps are RFC3339 UTC: `observed_at` "
+        "and `lightning_strike_last_at` on observation entries, `retrieved_at` "
+        "on every fetching tool's result, and ts_retrieved in "
+        '_meta["net.bconnelly.tempest/fetch"].'
+    ),
+    "units": (
+        "Observation values are metric/SI, described by the result's `units` "
+        "object; forecast values are described by the forecast result's own "
+        "`units`; `station_units` is the owner's display preference, not the "
+        "units of the values."
     ),
     "caching": (
         "In-memory (WEATHERFLOW_CACHE_TTL, default 300s) for every tool that "
@@ -784,6 +870,9 @@ _CAPABILITY_CONTRACT: dict = {
         "(it may be omitted on some cache hits). tempest_get_capabilities is "
         "static — no upstream fetch or cache — so its _meta carries only "
         "{fingerprint, fingerprint_contract_version}."
+        " Results also carry `retrieved_at` (RFC3339 UTC) in structuredContent. "
+        "Pass refresh=true to tempest_get_observation or tempest_get_forecast to "
+        "bypass the cache; station data has no refresh argument."
     ),
 }
 
@@ -1259,8 +1348,7 @@ async def get_stations(
     - rate_limited, upstream_unavailable (temporary; retry, honoring
       retry_after_ms when present)
     - Catalog: tempest_get_capabilities / tempest://capabilities
-      (error_codes, error_channel); hint, when present, carries repair
-      guidance
+      (error_codes, error_channel); follow `repair` when present
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
@@ -1268,7 +1356,7 @@ async def get_stations(
 
     async def _work() -> ToolResult:
         fetched = await _get_stations_data(ctx)
-        result = fetched.data.model_dump(exclude=_STATIONS_EXCLUDE)
+        result = _stamp_retrieved_at(fetched.data.model_dump(exclude=_STATIONS_EXCLUDE), fetched)
         return _validated("stations", result, _meta_for(fetched))
 
     return await _dispatch(_work)
@@ -1312,8 +1400,7 @@ async def get_station_details(
     - rate_limited, upstream_unavailable (temporary; retry, honoring
       retry_after_ms when present)
     - Catalog: tempest_get_capabilities / tempest://capabilities
-      (error_codes, error_channel); hint, when present, carries repair
-      guidance
+      (error_codes, error_channel); follow `repair` when present
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
@@ -1321,7 +1408,7 @@ async def get_station_details(
 
     async def _work() -> ToolResult:
         fetched = await _get_station_details_data(station_id, ctx)
-        result = fetched.data.model_dump(exclude=_STATION_EXCLUDE)
+        result = _stamp_retrieved_at(fetched.data.model_dump(exclude=_STATION_EXCLUDE), fetched)
         return _validated("station", result, _meta_for(fetched))
 
     return await _dispatch(_work)
@@ -1376,6 +1463,18 @@ async def get_forecast(
             ),
         ),
     ] = False,
+    refresh: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "If true, bypass the server's cache and fetch fresh data from "
+                "WeatherFlow. Omit to accept cached data up to "
+                "WEATHERFLOW_CACHE_TTL old (default 300s); `retrieved_at` says when "
+                "it was fetched."
+            ),
+        ),
+    ] = False,
     ctx: Context | None = None,
 ) -> ToolResult:
     """Get the weather forecast for a station — includes a current snapshot
@@ -1395,8 +1494,9 @@ async def get_forecast(
     `truncation_hint` then states the shortfall. A plain call (no hours/days)
     is never reported as truncated.
 
-    Output: current snapshot + hourly + daily forecasts in the station's
-    configured units — read 'units' in the response.
+    Output: current snapshot + hourly + daily forecasts. Read `units` for
+    the units of these values (WeatherFlow returns metric by default, which
+    may differ from the owner's display preference).
 
     Errors:
     - station_not_found — invalid station_id; call tempest_get_stations
@@ -1405,15 +1505,14 @@ async def get_forecast(
     - rate_limited, upstream_unavailable (temporary; retry, honoring
       retry_after_ms when present)
     - Catalog: tempest_get_capabilities / tempest://capabilities
-      (error_codes, error_channel); hint, when present, carries repair
-      guidance
+      (error_codes, error_channel); follow `repair` when present
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
     """
 
     async def _work() -> ToolResult:
-        fetched = await _get_forecast_data(station_id, ctx)
+        fetched = await _get_forecast_data(station_id, ctx, use_cache=not refresh)
         result = fetched.data.model_dump(exclude=_FORECAST_EXCLUDE, exclude_none=not detailed)
 
         all_hourly = result["forecast"]["hourly"]
@@ -1481,6 +1580,7 @@ async def get_forecast(
         else:
             result.pop("truncation_hint", None)
 
+        result = _stamp_retrieved_at(result, fetched)
         return _validated("forecast", result, _meta_for(fetched))
 
     return await _dispatch(_work)
@@ -1504,7 +1604,24 @@ async def get_observation(
         bool,
         Field(
             default=False,
-            description="If true, return full response. Default is a condensed summary.",
+            description=(
+                "If true, add secondary fields (heat index, wind chill, wet bulb, "
+                "air density, brightness, station/barometric pressure, final "
+                "precip totals) and station coordinates. Default is a condensed "
+                "summary."
+            ),
+        ),
+    ] = False,
+    refresh: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "If true, bypass the server's cache and fetch fresh data from "
+                "WeatherFlow. Omit to accept cached data up to "
+                "WEATHERFLOW_CACHE_TTL old (default 300s); `retrieved_at` says when "
+                "it was fetched."
+            ),
         ),
     ] = False,
     ctx: Context | None = None,
@@ -1523,8 +1640,9 @@ async def get_observation(
 
     Workflow: requires station_id from tempest_get_stations.
 
-    Output: current observations in the station's configured units — read
-    'station_units' in the response.
+    Output: current observations. Values are metric/SI — read `units`.
+    `station_units` is the owner's display preference, not the units of the
+    values; convert to it when presenting to the user.
 
     Errors:
     - station_not_found — invalid station_id; call tempest_get_stations
@@ -1533,15 +1651,14 @@ async def get_observation(
     - rate_limited, upstream_unavailable (temporary; retry, honoring
       retry_after_ms when present)
     - Catalog: tempest_get_capabilities / tempest://capabilities
-      (error_codes, error_channel); hint, when present, carries repair
-      guidance
+      (error_codes, error_channel); follow `repair` when present
 
     Scope: the user's own WeatherFlow Tempest station(s) only — not a global
     or arbitrary-location weather service.
     """
 
     async def _work() -> ToolResult:
-        fetched = await _get_observation_data(station_id, ctx)
+        fetched = await _get_observation_data(station_id, ctx, use_cache=not refresh)
 
         if detailed:
             result = fetched.data.model_dump(exclude=_OBSERVATION_EXCLUDE)
@@ -1553,6 +1670,7 @@ async def get_observation(
             for key in ("latitude", "longitude", "elevation", "is_public"):
                 result.pop(key, None)
 
+        result = _stamp_retrieved_at(result, fetched)
         return _validated("observation", result, _meta_for(fetched))
 
     return await _dispatch(_work)

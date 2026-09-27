@@ -1,18 +1,25 @@
 # WeatherFlow Tempest MCP Server
 
-A Model Context Protocol (MCP) server that provides seamless access to WeatherFlow Tempest weather station data.
-This server enables AI assistants and applications to retrieve real-time weather observations, forecasts, and station metadata.
+A Model Context Protocol (MCP) server that gives AI assistants read-only access to **your own**
+WeatherFlow Tempest weather station(s): current observations, forecasts, and station metadata.
+
+It is not a general weather service. It does not cover:
+
+- locations away from your station, or global/regional weather (use a public weather API)
+- air quality, pollen, or smoke
+- severe-weather alerts, radar, or watches/warnings
+- historical archives beyond what the live Tempest API returns
 
 
 ## 🌤️ Features
 
-- **Real-time Weather Data**: Access current conditions from personal weather stations
-- **Weather Forecasts**: Get hourly and daily forecasts with professional meteorological models
-- **Station Management**: Discover and manage multiple weather stations
-- **Device Information**: Detailed metadata about connected weather devices
-- **Intelligent Caching**: Automatic caching with configurable TTL for optimal performance
-- **Tools for interactive queries and structured weather data**
-- **Comprehensive Data**: Temperature, humidity, pressure, wind, precipitation, solar radiation, UV index, and lightning detection
+- **Current conditions** from your station: temperature, humidity, pressure, wind, rain,
+  solar radiation, UV, and lightning
+- **Forecasts**: hourly (up to 48 h) and daily (up to 10 days), plus a current snapshot
+- **Station inventory**: your stations, their locations, devices, and sensor capabilities
+- **Caching** in memory and on disk, with a `refresh` option for the latest reading
+- **Structured results and errors** for agents: typed output schemas, explicit units,
+  RFC3339 timestamps, and error responses that include a ready-to-run corrected call
 
 
 ## 🚀 Quick Start
@@ -85,143 +92,83 @@ launch — no separate Python install is required.
 The server caches responses in two layers:
 
 - **In-memory** (`WEATHERFLOW_CACHE_TTL` / `WEATHERFLOW_CACHE_SIZE`): all four
-  tools.
+  data tools (`tempest_get_capabilities` is static and uncached).
 - **On disk** (`WEATHERFLOW_DISK_CACHE_TTL`, default 24h): `tempest_get_stations` and
   `tempest_get_station_details` only. Stored under
   `platformdirs.user_cache_dir("mcp-server-tempest")` in a per-token
   (hash-keyed) subdirectory.
 
-To clear: restart the server (in-memory) or delete the cache directory
-(disk).
+To bypass the cache for current data, pass `refresh=true` to
+`tempest_get_observation` or `tempest_get_forecast`. Station data has no
+`refresh` argument: to clear it, restart the server (in-memory) or delete the
+cache directory (disk). Every data result carries `retrieved_at`, the time the
+server fetched it from WeatherFlow.
 
 ### Transport
 
-stdio (the default for `uvx mcp-server-tempest` and the README config).
+stdio (the default for `uvx mcp-server-tempest` and the configuration above).
 
 
 ## 🛠️ Usage
 
-### Available Tools
+### Tools
 
-#### `tempest_get_stations()`
-Get a list of all your weather stations and connected devices.
+| Tool | Use it for | Arguments |
+|------|-----------|-----------|
+| `tempest_get_stations` | Listing your stations, their locations, and devices. Start here: station IDs can't be guessed. | none |
+| `tempest_get_station_details` | One station's configuration and hardware, plus the sensor `capabilities` the station list omits | `station_id` |
+| `tempest_get_observation` | Current conditions | `station_id`; `detailed` (default `false`: condensed); `refresh` (default `false`) |
+| `tempest_get_forecast` | Hourly and daily forecast, plus a current snapshot | `station_id`; `hours` 1–48 (default 6); `days` 1–10 (default 2); `detailed`; `refresh` |
+| `tempest_get_capabilities` | What the server does and doesn't do, its tools, error codes, and a fingerprint of its interface. Needs no API token. | none |
 
-```python
-# Get all available stations
-stations = await client.call_tool("tempest_get_stations")
-for station in stations["stations"]:
-    print(f"Station: {station['name']} (ID: {station['station_id']})")
-    print(f"Location: {station['latitude']}, {station['longitude']}")
-```
+The same capability summary is available as the MCP resource `tempest://capabilities`.
+It is the authoritative, machine-readable contract; the table above is a quick guide.
 
-#### `tempest_get_observation(station_id)`
-Get current weather conditions for a specific station.
+### Reading results
 
-```python
-# Get current conditions
-obs = await client.call_tool("tempest_get_observation", {"station_id": 12345})
-current = obs["obs"][0]
-print(f"Temperature: {current['air_temperature']}°")
-print(f"Humidity: {current['relative_humidity']}%")
-print(f"Wind: {current['wind_avg']} {obs['station_units']['units_wind']}")
-```
-
-#### `tempest_get_forecast(station_id)`
-Get weather forecast and current conditions.
-
-```python
-# Get forecast
-forecast = await client.call_tool("tempest_get_forecast", {"station_id": 12345})
-
-# Current conditions
-current = forecast["current_conditions"]
-print(f"Current: {current['air_temperature']}°")
-print(f"Conditions: {current['conditions']}")
-
-# Today's forecast
-today = forecast["forecast"]["daily"][0]
-print(f"High/Low: {today['air_temp_high']}°/{today['air_temp_low']}°")
-print(f"Rain chance: {today['precip_probability']}%")
-```
-
-#### `tempest_get_station_details(station_id)`
-Get detailed information about a specific station.
-
-```python
-# Get station details
-station = await client.call_tool("tempest_get_station_details", {"station_id": 12345})
-print(f"Station: {station['name']}")
-print(f"Elevation: {station['station_meta']['elevation']}m")
-print(f"Devices: {len(station['devices'])}")
-```
+- **Units.** Observation values are always metric/SI and are described by the result's
+  `units` object. Forecast values are described by the forecast's own `units`. The
+  observation's `station_units` is the station owner's *display preference*, not the unit
+  of the values: convert to it when presenting.
+- **Times.** Raw fields such as `timestamp`, `time`, and `lightning_strike_last_epoch` are
+  Unix seconds. Observations also carry `observed_at` and `lightning_strike_last_at`, and
+  every data result carries `retrieved_at`, all RFC3339 in UTC. Hourly forecast entries
+  include `local_day` and `local_hour` in the station's own timezone.
+- **Errors** come back as a tool error whose structured content has a symbolic `code`
+  (branch on it, not on `message`), `temporary` (plus `retry_after_ms` when true), and,
+  when the server can build one, `repair`: a corrected call to make as-is. The full error
+  contract is the `error_channel` field of the capability summary. Version 0.11.0 changed
+  the error format (`next` became `repair`); see the [CHANGELOG](CHANGELOG.md).
 
 
-## 🌟 Examples
+## 🌟 Example questions
 
-### Basic Weather Check
+Once the server is configured, ask your assistant in plain language. Some examples, with the
+tool it will typically use:
 
-```python
-# Get your stations
-stations = await client.call_tool("tempest_get_stations")
-station_id = stations["stations"][0]["station_id"]
+| You ask | Tool |
+|---------|------|
+| "What weather stations do I have?" / "What's my station's elevation?" | `tempest_get_stations` |
+| "Is it raining at home right now?" / "How windy is it?" | `tempest_get_observation` |
+| "Has there been any lightning nearby?" | `tempest_get_observation` |
+| "Will it freeze tonight?" / "What's the forecast for the weekend?" | `tempest_get_forecast` |
+| "Is it a good afternoon for a run?" | `tempest_get_forecast` |
+| "What can my station measure?" / "What hardware does it have?" | `tempest_get_station_details` |
+| "What can this weather server do?" | `tempest_get_capabilities` |
 
-# Get current conditions
-obs = await client.call_tool("tempest_get_observation", {"station_id": station_id})
-current = obs["obs"][0]
-units = obs["station_units"]
-
-print(f"🌡️  Temperature: {current['air_temperature']}°{units['units_temp']}")
-print(f"💧 Humidity: {current['relative_humidity']}%")
-print(f"💨 Wind: {current['wind_avg']} {units['units_wind']}")
-print(f"🌧️  Precipitation: {current['precip_accum_local_day']} {units['units_precip']}")
-```
-
-### Weather Forecast
-
-```python
-from datetime import datetime
-
-# Get forecast
-forecast = await client.call_tool("tempest_get_forecast", {"station_id": station_id})
-
-# Today's weather
-today = forecast["forecast"]["daily"][0]
-print(f"📅 Today: {today['conditions']}")
-print(f"🌡️  High: {today['air_temp_high']}° / Low: {today['air_temp_low']}°")
-print(f"🌧️  Rain chance: {today['precip_probability']}%")
-
-# Next few hours
-for hour in forecast["forecast"]["hourly"][:6]:
-    time = datetime.fromtimestamp(hour["time"])
-    print(f"🕐 {time.strftime('%H:%M')}: {hour['air_temperature']}° - {hour['conditions']}")
-```
-
-### Station Information
-
-```python
-# Get station details
-station = await client.call_tool("tempest_get_station_details", {"station_id": station_id})
-
-print(f"🏠 Station: {station['name']}")
-print(f"📍 Location: {station['latitude']}°, {station['longitude']}°")
-print(f"⛰️  Elevation: {station['station_meta']['elevation']}m")
-print(f"🕐 Timezone: {station['timezone']}")
-
-# Check device status
-for device in station["devices"]:
-    if device.get("serial_number"):
-        status = "🟢 Online" if device.get("device_meta") else "🔴 Offline"
-        print(f"📡 {device['device_type']}: {status}")
-```
+Building your own client instead? Any MCP client works; the tools return structured
+results described by each tool's output schema. See, for example, the
+[FastMCP client docs](https://gofastmcp.com/clients/client).
 
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Contributions are welcome. [AGENTS.md](AGENTS.md) is the guide for humans and AI agents
+alike: environment setup with `uv`, how to run the tests and linters, branch and commit
+conventions (conventional commits; signed commits on `main`), and how pull requests are
+reviewed and merged. Release notes live in [CHANGELOG.md](CHANGELOG.md).
+
+Please report security issues privately, as described in [SECURITY.md](SECURITY.md).
 
 
 ## 📄 License
@@ -232,7 +179,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - [WeatherFlow](https://weatherflow.com/) for providing the Tempest weather station and API
 - [Model Context Protocol](https://modelcontextprotocol.io/) for the MCP specification
-- [FastMCP](https://github.com/jlowin/fastmcp) for the MCP server framework
+- [FastMCP](https://github.com/PrefectHQ/fastmcp) for the MCP server framework
 
 ## 📞 Support
 

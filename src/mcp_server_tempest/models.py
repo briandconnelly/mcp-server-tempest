@@ -1,6 +1,7 @@
+from datetime import UTC, datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 # Enums for better type safety
@@ -77,6 +78,24 @@ class Units(BaseModel):
     units_distance: DistanceUnit
     units_direction: DirectionUnit | None = None
     units_other: UnitSystem
+
+
+# Units of the numeric values in an observation payload. WeatherFlow's
+# /observations/station endpoint reports SI/metric values; `station_units` in
+# the same payload is the station owner's *display preference* (weatherflow4py
+# StationUnits: "the units of the Station's owner, not the units of the
+# observation values"). Confirmed live 2026-09-27: an imperial-preference
+# station returned air_temperature 12.5 beside units_temp "f" while the
+# forecast snapshot read 12 °C.
+OBSERVATION_VALUE_UNITS = Units(
+    units_temp=TemperatureUnit.CELSIUS,
+    units_wind=WindUnit.MPS,
+    units_pressure=PressureUnit.MB,
+    units_precip=PrecipUnit.MILLIMETERS,
+    units_distance=DistanceUnit.KILOMETERS,
+    units_direction=DirectionUnit.DEGREES,
+    units_other=UnitSystem.METRIC,
+)
 
 
 class Location(BaseModel):
@@ -303,6 +322,23 @@ class WeatherObservation(BaseModel):
     delta_t: float = Field(description="Delta T (difference between air temp and wet bulb temp)")
     air_density: float
 
+    @computed_field(description="RFC3339 UTC form of `timestamp`.")
+    @property
+    def observed_at(self) -> str:
+        return datetime.fromtimestamp(self.timestamp, tz=UTC).isoformat()
+
+    @computed_field(
+        description=(
+            "RFC3339 UTC form of `lightning_strike_last_epoch`; null (omitted in "
+            "summary mode) when no strike is recorded."
+        )
+    )
+    @property
+    def lightning_strike_last_at(self) -> str | None:
+        if self.lightning_strike_last_epoch is None:
+            return None
+        return datetime.fromtimestamp(self.lightning_strike_last_epoch, tz=UTC).isoformat()
+
 
 # Main Response Models
 class StationsResponse(BaseModel):
@@ -328,7 +364,12 @@ class ForecastResponse(BaseModel):
     longitude: float
     timezone: str = Field(description="IANA timezone identifier", examples=["America/Los_Angeles"])
     timezone_offset_minutes: int = Field(description="UTC offset in minutes")
-    units: Units
+    units: Units = Field(
+        description=(
+            "Units of the forecast values, as reported by WeatherFlow (metric "
+            "by default). May differ from the station owner's display preference."
+        )
+    )
     # Truncation transparency. Populated by the get_forecast tool, not the
     # upstream API; defaults keep `ForecastResponse(**raw_upstream)` working.
     truncated: bool = Field(
@@ -369,6 +410,12 @@ class ForecastResponse(BaseModel):
 class ObservationResponse(BaseModel):
     """Weather observation response"""
 
+    # Upstream never sends `units`, so it needs a default to parse — but the
+    # handler always emits it, so publish it as required. Leaves `extra` unset
+    # (test_runtime_models_remain_permissive still holds). ObservationResponse
+    # has no other defaulted fields, so nothing else becomes required.
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
     outdoor_keys: list[str] = Field(description="List of available outdoor measurement field names")
     obs: list[WeatherObservation]
     station_id: int
@@ -381,5 +428,14 @@ class ObservationResponse(BaseModel):
     elevation: float = Field(description="Elevation of the station in meters")
     is_public: bool
     timezone: str = Field(description="IANA timezone identifier", examples=["America/Los_Angeles"])
-    station_units: Units
+    station_units: Units = Field(
+        description=(
+            "The station owner's display preference. NOT the units of the values "
+            "in `obs`; read `units` for those and convert when presenting."
+        )
+    )
+    units: Units = Field(
+        default_factory=lambda: OBSERVATION_VALUE_UNITS.model_copy(),
+        description="Units of the numeric values in `obs` (always metric/SI).",
+    )
     status: APIStatus

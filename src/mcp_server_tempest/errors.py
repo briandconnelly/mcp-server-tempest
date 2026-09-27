@@ -77,6 +77,18 @@ def _new_request_id() -> str:
     return secrets.token_hex(8)
 
 
+def repair_call(
+    next_step: str, tool: str, arguments: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """One callable next step: call `tool` with `arguments` exactly."""
+    return {"next_step": next_step, "tool": tool, "arguments": dict(arguments or {})}
+
+
+def list_stations_repair() -> dict[str, Any]:
+    """The station_id is unknown or wrong: discover valid ones first."""
+    return repair_call("list_stations", "tempest_get_stations")
+
+
 @dataclass
 class WeatherFlowError(Exception):
     """Internal exception type carrying a structured error payload.
@@ -95,7 +107,7 @@ class WeatherFlowError(Exception):
     hint: str | None = None
     field_name: str | None = None
     value: Any = None
-    next: dict[str, Any] | None = None
+    repair: dict[str, Any] | None = None
     retry_after_ms: int | None = None
     details: dict[str, Any] = field(default_factory=dict)
 
@@ -119,8 +131,8 @@ class WeatherFlowError(Exception):
             out["hint"] = self.hint
         if self.field_name is not None:
             out["field"] = self.field_name
-        if self.next is not None:
-            out["next"] = self.next
+        if self.repair is not None:
+            out["repair"] = self.repair
         if self.temporary:
             # Always present when temporary: true — non-negative int when
             # known, else None ("retry with backoff"); agents branch on the

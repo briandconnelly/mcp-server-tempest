@@ -18,7 +18,7 @@ import pytest
 from fastmcp.tools.base import ToolResult
 
 import mcp_server_tempest.server as server_module
-from mcp_server_tempest.errors import ErrorCode, WeatherFlowError
+from mcp_server_tempest.errors import ErrorCode, WeatherFlowError, list_stations_repair
 from mcp_server_tempest.server import (
     cache,
     get_forecast,
@@ -102,12 +102,12 @@ class TestAuthForbiddenBoundary:
                 code=ErrorCode.AUTH_FORBIDDEN,
                 message="no access",
                 hint="verify ownership",
-                next={"tool": "tempest_get_stations"},
+                repair=list_stations_repair(),
             ),
         ):
             payload = await _payload_from(lambda: get_observation(station_id=12345))
         assert payload["code"] == "auth_forbidden"
-        assert payload["next"] == {"tool": "tempest_get_stations"}
+        assert payload["repair"] == list_stations_repair()
 
     async def test_403_on_get_stations_no_next(self):
         with patch(
@@ -120,7 +120,7 @@ class TestAuthForbiddenBoundary:
         ):
             payload = await _payload_from(lambda: get_stations())
         assert payload["code"] == "auth_forbidden"
-        assert "next" not in payload
+        assert "repair" not in payload
 
 
 class TestStationNotFoundBoundary:
@@ -133,14 +133,14 @@ class TestStationNotFoundBoundary:
                 hint="call tempest_get_stations",
                 field_name="station_id",
                 value=99999,
-                next={"tool": "tempest_get_stations"},
+                repair=list_stations_repair(),
             ),
         ):
             payload = await _payload_from(lambda: get_observation(station_id=99999))
         assert payload["code"] == "station_not_found"
         assert payload["field"] == "station_id"
         assert payload["value"] == 99999
-        assert payload["next"] == {"tool": "tempest_get_stations"}
+        assert payload["repair"] == list_stations_repair()
 
 
 class TestRateLimitedBoundary:

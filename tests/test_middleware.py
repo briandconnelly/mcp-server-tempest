@@ -61,7 +61,8 @@ async def test_unknown_argument_returns_structured_invalid_argument():
     assert r.is_error
     payload = json.loads(r.content[0].text)
     assert payload["code"] == "invalid_argument"
-    assert payload["field"] == "bogus"
+    assert payload["details"]["unknown_argument"] == "bogus"
+    assert "field" not in payload
 
 
 async def test_unknown_secret_named_arg_value_not_reflected():
@@ -73,7 +74,8 @@ async def test_unknown_secret_named_arg_value_not_reflected():
     assert r.is_error
     payload = json.loads(r.content[0].text)
     assert payload["code"] == "invalid_argument"
-    assert payload["field"] == "api_token"
+    assert payload["details"]["unknown_argument"] == "api_token"
+    assert "field" not in payload
     assert "value" not in payload
     assert secret not in r.content[0].text
 
@@ -107,7 +109,7 @@ async def test_tools_use_tempest_prefix():
 
 
 async def test_station_not_found_repair_references_prefixed_name():
-    from mcp_server_tempest.errors import ErrorCode, WeatherFlowError
+    from mcp_server_tempest.errors import ErrorCode, WeatherFlowError, list_stations_repair
 
     wfe = WeatherFlowError(
         code=ErrorCode.STATION_NOT_FOUND,
@@ -115,7 +117,7 @@ async def test_station_not_found_repair_references_prefixed_name():
         hint="Call tempest_get_stations to list valid station_ids.",
         field_name="station_id",
         value=99999,
-        next={"tool": "tempest_get_stations"},
+        repair=list_stations_repair(),
     )
     with patch("mcp_server_tempest.server.api_get_observation", side_effect=wfe):
         async with _client() as c:
@@ -125,7 +127,7 @@ async def test_station_not_found_repair_references_prefixed_name():
     assert r.is_error
     payload = json.loads(r.content[0].text)
     assert payload["code"] == "station_not_found"
-    assert payload["next"] == {"tool": "tempest_get_stations"}
+    assert payload["repair"] == list_stations_repair()
     assert "tempest_get_stations" in payload["hint"]
     assert payload["temporary"] is False
     assert "request_id" in payload
@@ -147,3 +149,196 @@ async def test_every_tool_description_states_station_scope():
         tools = await c.list_tools()
     for t in tools:
         assert "not a global" in (t.description or "").lower(), t.name
+
+
+async def _call(name, args):
+    async with _client() as c:
+        r = await c.call_tool(name, args, raise_on_error=False)
+    assert r.is_error
+    return json.loads(r.content[0].text), r.content[0].text
+
+
+async def test_out_of_range_hours_repairs_to_bound_preserving_intent():
+    payload, _ = await _call(
+        "tempest_get_forecast", {"station_id": 1, "hours": 100, "detailed": True}
+    )
+    assert payload["repair"] == {
+        "next_step": "retry_with_corrected_arguments",
+        "tool": "tempest_get_forecast",
+        "arguments": {"station_id": 1, "detailed": True, "hours": 48},
+    }
+
+
+async def test_below_minimum_hours_repairs_to_lower_bound():
+    payload, _ = await _call("tempest_get_forecast", {"station_id": 1, "hours": 0})
+    assert payload["repair"]["arguments"] == {"station_id": 1, "hours": 1}
+
+
+async def test_repair_fixes_every_invalid_argument_at_once():
+    # Pydantic reports both errors; a repair that fixed only `hours` would
+    # hand the agent a retry that fails again on `days`.
+    payload, _ = await _call("tempest_get_forecast", {"station_id": 1, "hours": 100, "days": 0})
+    assert payload["details"]["error_count"] == 2
+    assert payload["repair"] == {
+        "next_step": "retry_with_corrected_arguments",
+        "tool": "tempest_get_forecast",
+        "arguments": {"station_id": 1, "hours": 48, "days": 1},
+    }
+
+
+async def test_bad_station_id_repairs_via_station_lookup():
+    for args in ({"station_id": -5}, {}):
+        payload, _ = await _call("tempest_get_observation", args)
+        assert payload["repair"] == {
+            "next_step": "list_stations",
+            "tool": "tempest_get_stations",
+            "arguments": {},
+        }
+
+
+async def test_unparseable_optional_argument_repairs_by_omission():
+    payload, _ = await _call("tempest_get_forecast", {"station_id": 1, "hours": "abc"})
+    assert payload["repair"] == {
+        "next_step": "retry_without_invalid_arguments",
+        "tool": "tempest_get_forecast",
+        "arguments": {"station_id": 1},
+    }
+
+
+async def test_repair_never_carries_unknown_or_string_arguments():
+    # Review Focus #1.
+    secret = "sk-super-secret-value"
+    payload, text = await _call("tempest_get_observation", {"station_id": 1, "api_token": secret})
+    assert "field" not in payload
+    assert payload["details"]["unknown_argument"] == "api_token"
+    assert payload["repair"] == {
+        "next_step": "retry_without_unknown_arguments",
+        "tool": "tempest_get_observation",
+        "arguments": {"station_id": 1},
+    }
+    assert secret not in text
+
+
+async def test_numeric_unknown_argument_value_not_reflected():
+    # Review Focus #4: FastMCP 4 reports unexpected_keyword_argument.
+    payload, _ = await _call("tempest_get_capabilities", {"bogus": 1})
+    assert "value" not in payload
+    assert payload["repair"] == {
+        "next_step": "retry_without_unknown_arguments",
+        "tool": "tempest_get_capabilities",
+        "arguments": {},
+    }
+
+
+async def test_repair_keeps_lax_coerced_required_argument_typed():
+    # F-1: station_id "1" passed lax validation; dropping it would hand the
+    # agent a retry certain to fail on the missing required argument.
+    payload, _ = await _call("tempest_get_forecast", {"station_id": "1", "hours": 100})
+    assert payload["repair"] == {
+        "next_step": "retry_with_corrected_arguments",
+        "tool": "tempest_get_forecast",
+        "arguments": {"station_id": 1, "hours": 48},
+    }
+    assert isinstance(payload["repair"]["arguments"]["station_id"], int)
+
+
+async def test_repair_keeps_lax_coerced_boolean_argument():
+    payload, _ = await _call(
+        "tempest_get_forecast", {"station_id": 1, "hours": 100, "detailed": "true"}
+    )
+    assert payload["repair"]["arguments"] == {"station_id": 1, "hours": 48, "detailed": True}
+
+
+async def test_repair_with_bound_correction_never_carries_secret_unknown_argument():
+    # Review Focus #1, riskiest variant: a bound correction plus a secret in
+    # an unknown argument, in either argument order.
+    secret = "sk-super-secret-value"
+    for args in (
+        {"station_id": 1, "hours": 100, "api_token": secret},
+        {"api_token": secret, "station_id": 1, "hours": 100},
+    ):
+        payload, text = await _call("tempest_get_forecast", args)
+        assert secret not in text
+        assert payload["repair"]["arguments"] == {"station_id": 1, "hours": 48}
+        assert payload["details"]["unknown_argument"] == "api_token"
+
+
+async def test_every_unknown_argument_is_reported():
+    # F-2: the unknown arguments are not the first error.
+    payload, _ = await _call(
+        "tempest_get_forecast", {"station_id": 1, "days": 100, "bogus": 2, "other": 3}
+    )
+    assert payload["details"]["unknown_argument"] == "bogus"
+    assert payload["details"]["unknown_arguments"] == ["bogus", "other"]
+    assert payload["repair"]["arguments"] == {"station_id": 1, "days": 10}
+    assert payload.get("value") not in (2, 3)
+
+
+async def test_single_unknown_argument_has_no_unknown_arguments_list():
+    payload, _ = await _call("tempest_get_observation", {"station_id": 1, "bogus": 2})
+    assert payload["details"]["unknown_argument"] == "bogus"
+    assert "unknown_arguments" not in payload["details"]
+
+
+def test_no_repair_when_required_parameter_would_be_missing():
+    # F-1 safety net: a repair certain to fail is worse than none.
+    from mcp_server_tempest.middleware import _repair_for
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "station_id": {"type": "integer", "exclusiveMinimum": 0},
+            "hours": {
+                "anyOf": [{"type": "integer", "minimum": 1, "maximum": 48}, {"type": "null"}]
+            },
+        },
+        "required": ["station_id"],
+    }
+    errors = [{"type": "less_than_equal", "loc": ("hours",), "ctx": {"le": 48}, "input": 100}]
+    # station_id carries a value the published type cannot coerce, so it
+    # cannot be preserved.
+    assert (
+        _repair_for(errors, "tempest_get_forecast", {"station_id": "x", "hours": 100}, schema)
+        is None
+    )
+    assert _repair_for(errors, "tempest_get_forecast", {"hours": 100}, schema) is None
+    # Control: the same call with a preservable station_id does get a repair.
+    assert _repair_for(
+        errors, "tempest_get_forecast", {"station_id": "7", "hours": 100}, schema
+    ) == {
+        "next_step": "retry_with_corrected_arguments",
+        "tool": "tempest_get_forecast",
+        "arguments": {"station_id": 7, "hours": 48},
+    }
+
+
+async def test_combined_unknown_and_invalid_drop_uses_invalid_label():
+    # F-3
+    payload, _ = await _call(
+        "tempest_get_forecast", {"station_id": 1, "detailed": "maybe", "zzz": 2}
+    )
+    assert payload["repair"] == {
+        "next_step": "retry_without_invalid_arguments",
+        "tool": "tempest_get_forecast",
+        "arguments": {"station_id": 1},
+    }
+
+
+async def test_secret_shaped_unknown_argument_name_is_redacted():
+    # Copilot review (PR #125): an unknown argument's *name* is caller-controlled
+    # too. A secret pasted as a key must not be echoed into the error.
+    for secret in (
+        "sk-proj-AbC123xyz",
+        "a3f9c1d2e4b5a6978877665544332211",
+        "sk_live_4ec39hqlyjwdarjtt1zd",
+    ):
+        payload, text = await _call("tempest_get_observation", {"station_id": 1, secret: 1})
+        assert payload["details"]["unknown_argument"] == "[redacted]"
+        assert secret not in text
+        assert payload["repair"]["arguments"] == {"station_id": 1}
+
+
+async def test_parameter_shaped_unknown_argument_name_is_still_reported():
+    # A plausible typo keeps its diagnostic value.
+    payload, _ = await _call("tempest_get_observation", {"station": 1})
+    assert payload["details"]["unknown_argument"] == "station"

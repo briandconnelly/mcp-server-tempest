@@ -155,11 +155,11 @@ def _make_hourly_forecast(hour: int = 0) -> dict:
 def _make_observation() -> dict:
     return {
         "timestamp": 1700000000,
-        "air_temperature": 72.0,
-        "barometric_pressure": 30.1,
-        "station_pressure": 29.9,
+        "air_temperature": 22.2,
+        "barometric_pressure": 1019.2,
+        "station_pressure": 1012.6,
         "pressure_trend": "steady",
-        "sea_level_pressure": 30.1,
+        "sea_level_pressure": 1019.2,
         "relative_humidity": 50,
         "precip": 0.0,
         "precip_accum_last_1hr": 0.0,
@@ -171,10 +171,10 @@ def _make_observation() -> dict:
         "precip_minutes_local_day": 0,
         "precip_minutes_local_yesterday": 0,
         "precip_minutes_local_yesterday_final": 0,
-        "wind_avg": 5.0,
+        "wind_avg": 2.2,
         "wind_direction": 180,
-        "wind_gust": 10.0,
-        "wind_lull": 2.0,
+        "wind_gust": 4.5,
+        "wind_lull": 0.9,
         "solar_radiation": 500.0,
         "uv": 3.0,
         "brightness": 50000.0,
@@ -183,13 +183,13 @@ def _make_observation() -> dict:
         "lightning_strike_count": 0,
         "lightning_strike_count_last_1hr": 0,
         "lightning_strike_count_last_3hr": 0,
-        "feels_like": 72.0,
-        "heat_index": 72.0,
-        "wind_chill": 72.0,
-        "dew_point": 52.0,
-        "wet_bulb_temperature": 60.0,
-        "wet_bulb_globe_temperature": 65.0,
-        "delta_t": 20.0,
+        "feels_like": 22.2,
+        "heat_index": 22.2,
+        "wind_chill": 22.2,
+        "dew_point": 11.1,
+        "wet_bulb_temperature": 15.6,
+        "wet_bulb_globe_temperature": 18.3,
+        "delta_t": 6.6,
         "air_density": 1.2,
     }
 
@@ -1262,6 +1262,52 @@ class TestStripTitles:
         assert _FORECAST_SCHEMA["properties"]["truncation_hint"]["description"]
 
 
+# -- Tests for output schema examples stripping (F3) --
+
+
+class TestStripExamples:
+    """Pydantic copies ``Field(examples=[...])`` into the published output
+    schema; examples carry no validation semantics and cost bytes on every
+    ``tools/list``. A property literally named ``examples`` must survive."""
+
+    def test_strips_examples_keyword_but_keeps_property_named_examples(self):
+        from mcp_server_tempest.server import _strip_examples
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "examples": ["Seattle"]},
+                "examples": {"type": "array", "items": {"type": "string"}},
+            },
+        }
+        _strip_examples(schema)
+        assert "examples" not in schema["properties"]["name"]
+        assert schema["properties"]["examples"] == {"type": "array", "items": {"type": "string"}}
+
+    def test_published_output_schemas_carry_no_examples(self):
+        for s in (_STATIONS_SCHEMA, _STATION_SCHEMA, _FORECAST_SCHEMA, _OBSERVATION_SCHEMA):
+            assert all(not isinstance(d.get("examples"), list) for d in _walk_all_dicts(s))
+
+
+# Serialized tools/list budget, compact UTF-8 JSON of the Tool records as the
+# client receives them. Measured after review-2 fixes; raise it deliberately,
+# with the new measurement, when a change genuinely needs the bytes.
+# Measured 32132 bytes, 2026-09-27 (rounded up to the next multiple of 250).
+TOOLS_LIST_BUDGET_BYTES = 32250
+
+
+async def test_tools_list_stays_within_measured_budget():
+    import fastmcp
+
+    async with fastmcp.Client(mcp) as c:
+        records = [
+            t.model_dump(exclude_none=True, mode="json", by_alias=True)
+            for t in await c.list_tools()
+        ]
+    size = len(json.dumps(records, separators=(",", ":")).encode())
+    assert size <= TOOLS_LIST_BUDGET_BYTES, f"tools/list is {size} bytes"
+
+
 # -- Tests for output schema additionalProperties lockdown --
 
 
@@ -1480,12 +1526,45 @@ class TestServerInstructions:
             "TOOL SELECTION",
             "NOTES",
             "AMBIENT STATE",
+            "REQUIRED",
             "TYPICAL WORKFLOW",
             "SETUP",
             "SERVER SURFACE",
             "TRANSPORT",
         ):
             assert marker in text, f"{marker!r} missing from instructions"
+
+    # Claude Code delivers only the first 2,048 characters of `instructions` by
+    # default (measured 2026-09-26: .agents/skills/agent-friendly-mcp/decisions/
+    # 006-instructions-prefix.md; observed again 2026-09-27 cutting this
+    # server's v0.10.0 text inside AMBIENT STATE). The cap is user-configurable
+    # (CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH), so this pins the default only.
+    CLAUDE_CODE_PREFIX_CHARS = 2048
+    SENTINEL = "END OF TEMPEST INSTRUCTIONS"
+
+    def test_cache_freshness_rule_covers_disk_cached_station_data(self):
+        # Copilot review (PR #125): station data is disk-cached up to
+        # WEATHERFLOW_DISK_CACHE_TTL (default 24h), not WEATHERFLOW_CACHE_TTL.
+        head = mcp.instructions[: self.CLAUDE_CODE_PREFIX_CHARS]
+        assert "Results may be cached up to WEATHERFLOW_CACHE_TTL" not in head
+        assert "WEATHERFLOW_DISK_CACHE_TTL" in head
+
+    def test_sentinel_is_last_line(self):
+        assert mcp.instructions.rstrip("\n").splitlines()[-1] == self.SENTINEL
+
+    def test_binding_rules_fit_claude_code_prefix(self):
+        head = mcp.instructions[: self.CLAUDE_CODE_PREFIX_CHARS]
+        for phrase in (
+            self.SENTINEL,  # the self-check sentence names it at the head
+            "tempest://capabilities",
+            "DO NOT USE",
+            "Never guess a station_id",
+            "exactly one station",
+            "station_units",
+            "`repair`",
+            "refresh=true",
+        ):
+            assert phrase in head, f"{phrase!r} falls past the Claude Code prefix"
 
     def test_instructions_carries_server_surface_fingerprint(self):
         # SERVER SURFACE acts as a lightweight capability fingerprint (§9 of
@@ -2012,3 +2091,143 @@ async def test_observation_structured_content_conforms_to_advertised_schema():
                 r = await c.call_tool("tempest_get_observation", {"station_id": 12345})
     # The emitted structured content validates against the schema the tool advertises.
     Draft202012Validator(tool.output_schema).validate(r.structured_content)
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestObservationUnits:
+    """C1 (review 2): observation values are metric/SI regardless of the
+    owner's display preference. `units` must describe the values;
+    `station_units` is preference only."""
+
+    @pytest.mark.parametrize("detailed", [False, True])
+    async def test_units_describe_metric_values_not_station_preference(self, mock_ctx, detailed):
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = _structured(
+                await get_observation(station_id=12345, detailed=detailed, ctx=mock_ctx)
+            )
+        assert result["units"]["units_temp"] == "c"
+        assert result["units"]["units_wind"] == "mps"
+        assert result["units"]["units_pressure"] == "mb"
+        assert result["units"]["units_precip"] == "mm"
+        assert result["units"]["units_distance"] == "km"
+        # The fixture's owner preference is imperial and must survive untouched.
+        assert result["station_units"]["units_temp"] == "f"
+
+    def test_output_schema_advertises_units_as_required(self):
+        # The spec requires every observation result to carry `units`, so the
+        # published contract must say so (a defaulted field is otherwise
+        # optional in a serialization-mode schema).
+        assert "units" in _OBSERVATION_SCHEMA["properties"]
+        assert "units" in _OBSERVATION_SCHEMA["required"]
+
+    async def test_forecast_units_pass_through_from_upstream(self, mock_ctx):
+        metric = {
+            "units_temp": "c",
+            "units_wind": "mps",
+            "units_pressure": "mb",
+            "units_precip": "mm",
+            "units_distance": "km",
+            "units_other": "metric",
+        }
+        data = {**SAMPLE_FORECAST_DATA, "units": metric}
+        with patch("mcp_server_tempest.server.api_get_forecast", return_value=data):
+            result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
+        assert result["units"] == metric
+
+    def test_contract_text_does_not_equate_station_units_with_value_units(self):
+        from pathlib import Path
+
+        assert "Units follow each station's config" not in mcp.instructions
+        obs_doc = get_observation.__doc__ or ""
+        assert "configured units" not in obs_doc
+        assert "`units`" in obs_doc and "display preference" in obs_doc
+        assert "configured units" not in (get_forecast.__doc__ or "")
+        readme = (Path(__file__).parent.parent / "README.md").read_text()
+        assert "obs['station_units']['units_wind']" not in readme
+        assert 'obs["station_units"]' not in readme
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestObservationTimes:
+    async def test_observed_at_is_rfc3339_utc(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = _structured(await get_observation(station_id=12345, ctx=mock_ctx))
+        assert result["obs"][0]["observed_at"] == "2023-11-14T22:13:20+00:00"
+
+    async def test_lightning_strike_last_at_when_recorded(self, mock_ctx):
+        obs = {
+            **_make_observation(),
+            "lightning_strike_last_epoch": 1699999000,
+            "lightning_strike_last_distance": 18,
+        }
+        data = {**SAMPLE_OBSERVATION_DATA, "obs": [obs]}
+        with patch("mcp_server_tempest.server.api_get_observation", return_value=data):
+            result = _structured(await get_observation(station_id=12345, ctx=mock_ctx))
+        assert result["obs"][0]["lightning_strike_last_at"] == "2023-11-14T21:56:40+00:00"
+
+    @pytest.mark.parametrize("detailed", [False, True])
+    async def test_no_lightning_validates_in_both_modes(self, mock_ctx, detailed):
+        # Review Focus #2: the fixture's lightning epoch is None.
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = await get_observation(station_id=12345, detailed=detailed, ctx=mock_ctx)
+        assert result.is_error is not True
+        obs = result.structured_content["obs"][0]
+        if detailed:
+            assert obs["lightning_strike_last_at"] is None
+        else:
+            assert "lightning_strike_last_at" not in obs
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestFreshness:
+    async def test_observation_carries_retrieved_at(self, mock_ctx):
+        from mcp_server_tempest.server import _META_KEY
+
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = await get_observation(station_id=12345, ctx=mock_ctx)
+        assert result.structured_content["retrieved_at"] == result.meta[_META_KEY]["ts_retrieved"]
+
+    async def test_stations_carry_retrieved_at(self, mock_ctx):
+        with patch("mcp_server_tempest.server.api_get_stations", return_value=SAMPLE_STATION_DATA):
+            result = _structured(await get_stations(ctx=mock_ctx))
+        assert result["retrieved_at"].endswith("+00:00")
+
+    async def test_refresh_bypasses_cache(self, mock_ctx):
+        api = AsyncMock(return_value=SAMPLE_OBSERVATION_DATA)
+        with patch("mcp_server_tempest.server.api_get_observation", new=api):
+            await get_observation(station_id=12345, ctx=mock_ctx)
+            await get_observation(station_id=12345, ctx=mock_ctx)
+            assert api.await_count == 1  # second call was a cache hit
+            await get_observation(station_id=12345, refresh=True, ctx=mock_ctx)
+            assert api.await_count == 2
+
+    async def test_forecast_refresh_bypasses_cache(self, mock_ctx):
+        api = AsyncMock(return_value=SAMPLE_FORECAST_DATA)
+        with patch("mcp_server_tempest.server.api_get_forecast", new=api):
+            await get_forecast(station_id=12345, ctx=mock_ctx)
+            await get_forecast(station_id=12345, refresh=True, ctx=mock_ctx)
+        assert api.await_count == 2
+
+    async def test_refresh_during_outage_returns_error_not_stale_cache(self, mock_ctx):
+        # Review Focus #3.
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            new=AsyncMock(return_value=SAMPLE_OBSERVATION_DATA),
+        ):
+            await get_observation(station_id=12345, ctx=mock_ctx)
+        err = WeatherFlowError(code=ErrorCode.RATE_LIMITED, message="WeatherFlow rate limit hit.")
+        with patch("mcp_server_tempest.server.api_get_observation", new=AsyncMock(side_effect=err)):
+            result = await get_observation(station_id=12345, refresh=True, ctx=mock_ctx)
+        assert _error_payload(result)["code"] == "rate_limited"

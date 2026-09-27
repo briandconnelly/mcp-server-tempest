@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Agent-friendliness review findings F1–F3 and F7. Both F1/F2 defects were prose
+## [0.11.0] - 2026-09-27
+
+Fixes a critical units mislabel in `tempest_get_observation`; see Fixed.
+
+Breaking for clients: read `repair.tool`/`repair.arguments` instead of
+`next.tool`, and read `details.unknown_argument` (and
+`details.unknown_arguments`) instead of `field` for unknown arguments.
+
+Agent-friendliness review 1 findings F1–F3 and F7. Both F1/F2 defects were prose
 or a toggle promising behavior the code did not deliver. Note that no
 fingerprint scheme could have caught them: the incorrect station description
 shipped in `c76b0ad`, before the fingerprint existed in `d602c1e`, so there was
@@ -27,7 +35,37 @@ selection guidance invalidate a cached surface.
   FastMCP error and returns the structured `invalid_argument` envelope as
   before.
 
+### Added
+
+- Observation entries carry `observed_at` and `lightning_strike_last_at`
+  (RFC3339 UTC) beside the raw epoch fields, so agents need not do epoch
+  arithmetic to answer "when" or "how long ago".
+- `retrieved_at` (RFC3339 UTC fetch time) in the structured result of every
+  fetching tool, where agents can see it (previously only in `_meta`).
+- `refresh` argument on `tempest_get_observation` and `tempest_get_forecast`
+  to bypass the cache when the user needs the latest reading.
+
 ### Changed
+
+- **Error envelope: `next` is replaced by a callable `repair` object
+  (breaking, pre-1.0).** `repair` is `{next_step, tool, arguments}`: call
+  `tool` with `arguments` exactly. `invalid_argument` errors now carry a repair
+  that preserves every still-valid argument, typed per the tool's input schema
+  (a lax-accepted `"1"` is returned as `1`), with the minimal correction (e.g.
+  `hours: 100` → `48`), fixing every reported argument error in one retry; no
+  `repair` is emitted when a required argument could not be preserved.
+  Bad or missing `station_id` routes to `tempest_get_stations`. Unknown
+  arguments are reported as `details.unknown_argument` (and all of them, when
+  several, as `details.unknown_arguments`) instead of `field`, which now always
+  names a published parameter, and their values are never reflected. An
+  unknown argument's name is echoed only when it is shaped like a parameter
+  name (lowercase snake_case); otherwise it is reported as `"[redacted]"`.
+  `details.error_count` is present when more than one argument error was
+  reported. The value-echo policy is disclosed in `error_channel`.
+
+- Output schemas no longer carry `examples` keywords (validation-neutral,
+  smaller `tools/list`); a test now pins the serialized `tools/list` size so
+  catalog growth is a deliberate decision.
 
 - **FastMCP 4 / MCP Python SDK v2.** Requires `fastmcp>=4.0.5,<5`, `mcp>=2.2,<3`,
   and `mcp-types>=2.2,<3` (the latter two now declared directly, since the
@@ -68,7 +106,28 @@ selection guidance invalidate a cached surface.
   authoritative: via `server/discover` on sessionless revisions, or
   `InitializeResult.protocolVersion` on handshake-era ones.
 
+- Server `instructions` reordered so negative scope, binding rules (station_id
+  discovery, units, repair, refresh) and the pointer to the full contract sit
+  inside Claude Code's default 2,048-character prefix, with a pinned final
+  line (`END OF TEMPEST INSTRUCTIONS`) that an agent can check its copy against.
+
 ### Fixed
+
+- **Observation values were labeled with the wrong units (critical).**
+  `tempest_get_observation` returns metric/SI values, but the instructions,
+  tool description, and README told agents to read them with `station_units`,
+  which is only the owner's display preference, so an imperial-preference
+  station's 12.5 °C read as 12.5 °F. Observation results now carry a `units`
+  object describing the values; `station_units` is documented as preference
+  only. The forecast description no longer claims station-configured units:
+  read its `units` object.
+
+- **README rewritten for MCP users.** The Python examples, which were also
+  broken (they indexed the `CallToolResult` from `client.call_tool` like a
+  dict), are replaced by example questions mapped to the tool an assistant
+  uses. The README now states what the server does not do, lists all five
+  tools with their arguments, explains how to read units, times, and errors,
+  and points contributors to AGENTS.md.
 
 - **`python -OO` no longer serves a catalog agents cannot select from.** Tool
   descriptions come from docstrings, which `-OO` discards, so an optimized run
@@ -110,6 +169,8 @@ selection guidance invalidate a cached surface.
   schema, where `detailed` was documented as "controls density only" while
   `hours` and `days` were documented as returning "all available in detailed
   mode".
+
+- Native serverInfo.version now reports the package version instead of FastMCP's.
 
 ## [0.10.0] - 2026-07-02
 
