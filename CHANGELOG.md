@@ -16,7 +16,25 @@ fingerprint detects change, not incorrectness. F7 below widens fingerprint
 coverage for a different and narrower reason — so that *later* changes to
 selection guidance invalidate a cached surface.
 
+### Security
+
+- **Argument-validation errors no longer reflect the rejected value.** FastMCP 4
+  wraps Pydantic argument errors in its own `ValidationError`, which the
+  contract middleware did not catch, so a malformed call (unknown argument,
+  wrong type, out-of-range `station_id`) returned raw Pydantic text with no
+  `code` — including the offending input, e.g. a token passed as an unknown
+  argument. Only observable on FastMCP 4; the middleware now unwraps the
+  FastMCP error and returns the structured `invalid_argument` envelope as
+  before.
+
 ### Changed
+
+- **FastMCP 4 / MCP Python SDK v2.** Requires `fastmcp>=4.0.5,<5`, `mcp>=2.2,<3`,
+  and `mcp-types>=2.2,<3` (the latter two now declared directly, since the
+  server imports them), and `pydantic>=2.12` (FastMCP 4's floor). The server now
+  answers both the sessionless `2026-07-28` protocol and the handshake-era
+  revisions from one process; tool behavior and results are unchanged on both,
+  and the suite runs the tool surface against each era.
 
 - **Capability fingerprint contract version 2.** The fingerprint now hashes the
   complete wire record of every tool (name, title, description, input schema,
@@ -42,12 +60,13 @@ selection guidance invalidate a cached surface.
   parallel, since that would let a client reuse stale descriptions.
 
 - **Declared protocol target.** `_CAPABILITY_CONTRACT` gains a `protocol`
-  object distinguishing the authored/tested target (`2025-11-25`) from the full
-  set of revisions the server accepts, which is read from the SDK rather than
-  hardcoded so it cannot claim revisions the server would reject. The
-  per-session revision remains whatever `initialize` returned in
-  `InitializeResult.protocolVersion`, and that value is authoritative for the
-  session.
+  object distinguishing the authored/tested target (`2026-07-28`) from the full
+  set of revisions the server accepts (`2024-11-05` through `2026-07-28`),
+  which is read from the SDK rather than hardcoded so it cannot claim revisions
+  the server would reject. `2025-11-25`, the newest handshake-era revision, is
+  tested alongside the target. The revision negotiated for a connection is
+  authoritative: via `server/discover` on sessionless revisions, or
+  `InitializeResult.protocolVersion` on handshake-era ones.
 
 ### Fixed
 

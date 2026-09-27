@@ -1585,9 +1585,9 @@ class TestToolAnnotations:
         for tool in tools:
             annotations = tool.annotations
             assert annotations is not None, tool.name
-            assert annotations.readOnlyHint is True, tool.name
-            assert annotations.openWorldHint is self._OPEN_WORLD[tool.name], tool.name
-            assert annotations.idempotentHint is None, (
+            assert annotations.read_only_hint is True, tool.name
+            assert annotations.open_world_hint is self._OPEN_WORLD[tool.name], tool.name
+            assert annotations.idempotent_hint is None, (
                 f"{tool.name}: idempotentHint should be omitted (readOnlyHint "
                 "tools are trivially idempotent; the spec scopes the hint to "
                 "non-read-only tools)"
@@ -2011,4 +2011,4 @@ async def test_observation_structured_content_conforms_to_advertised_schema():
                 tool = next(t for t in await c.list_tools() if t.name == "tempest_get_observation")
                 r = await c.call_tool("tempest_get_observation", {"station_id": 12345})
     # The emitted structured content validates against the schema the tool advertises.
-    Draft202012Validator(tool.outputSchema).validate(r.structured_content)
+    Draft202012Validator(tool.output_schema).validate(r.structured_content)
