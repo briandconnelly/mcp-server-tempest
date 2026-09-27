@@ -11,7 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Fixes a critical units mislabel in `tempest_get_observation`; see Fixed.
 
-Agent-friendliness review findings F1–F3 and F7. Both F1/F2 defects were prose
+Breaking for clients: read `repair.tool`/`repair.arguments` instead of
+`next.tool`, and read `details.unknown_argument` (and
+`details.unknown_arguments`) instead of `field` for unknown arguments.
+
+Agent-friendliness review 1 findings F1–F3 and F7. Both F1/F2 defects were prose
 or a toggle promising behavior the code did not deliver. Note that no
 fingerprint scheme could have caught them: the incorrect station description
 shipped in `c76b0ad`, before the fingerprint existed in `d602c1e`, so there was
@@ -43,20 +47,23 @@ selection guidance invalidate a cached surface.
 
 ### Changed
 
-- Output schemas no longer carry `examples` keywords (validation-neutral,
-  smaller `tools/list`); a test now pins the serialized `tools/list` size so
-  catalog growth is a deliberate decision.
-
 - **Error envelope: `next` is replaced by a callable `repair` object
   (breaking, pre-1.0).** `repair` is `{next_step, tool, arguments}`: call
   `tool` with `arguments` exactly. `invalid_argument` errors now carry a repair
-  that preserves every still-valid argument with the minimal correction (e.g.
-  `hours: 100` → `48`), fixing every reported argument error in one retry;
-  bad or missing `station_id` routes to
-  `tempest_get_stations`. Unknown arguments are reported as
-  `details.unknown_argument` instead of `field`, which now always names a
-  published parameter, and their values are never reflected. The value-echo
-  policy is disclosed in `error_channel`.
+  that preserves every still-valid argument, typed per the tool's input schema
+  (a lax-accepted `"1"` is returned as `1`), with the minimal correction (e.g.
+  `hours: 100` → `48`), fixing every reported argument error in one retry; no
+  `repair` is emitted when a required argument could not be preserved.
+  Bad or missing `station_id` routes to `tempest_get_stations`. Unknown
+  arguments are reported as `details.unknown_argument` (and all of them, when
+  several, as `details.unknown_arguments`) instead of `field`, which now always
+  names a published parameter, and their values are never reflected.
+  `details.error_count` is present when more than one argument error was
+  reported. The value-echo policy is disclosed in `error_channel`.
+
+- Output schemas no longer carry `examples` keywords (validation-neutral,
+  smaller `tools/list`); a test now pins the serialized `tools/list` size so
+  catalog growth is a deliberate decision.
 
 - **FastMCP 4 / MCP Python SDK v2.** Requires `fastmcp>=4.0.5,<5`, `mcp>=2.2,<3`,
   and `mcp-types>=2.2,<3` (the latter two now declared directly, since the

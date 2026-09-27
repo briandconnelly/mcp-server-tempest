@@ -91,8 +91,10 @@ The server caches responses in two layers:
   `platformdirs.user_cache_dir("mcp-server-tempest")` in a per-token
   (hash-keyed) subdirectory.
 
-To clear: restart the server (in-memory) or delete the cache directory
-(disk).
+To bypass the cache for current data, pass `refresh=true` to
+`tempest_get_observation` or `tempest_get_forecast`. Station data has no
+`refresh` argument: to clear it, restart the server (in-memory) or delete the
+cache directory (disk).
 
 ### Transport
 
