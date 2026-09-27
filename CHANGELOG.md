@@ -32,6 +32,10 @@ selection guidance invalidate a cached surface.
 - Observation entries carry `observed_at` and `lightning_strike_last_at`
   (RFC3339 UTC) beside the raw epoch fields, so agents need not do epoch
   arithmetic to answer "when" or "how long ago".
+- `retrieved_at` (RFC3339 UTC fetch time) in the structured result of every
+  fetching tool, where agents can see it (previously only in `_meta`).
+- `refresh` argument on `tempest_get_observation` and `tempest_get_forecast`
+  to bypass the cache when the user needs the latest reading.
 
 ### Changed
 

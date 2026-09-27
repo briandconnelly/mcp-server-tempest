@@ -2106,3 +2106,49 @@ class TestObservationTimes:
             assert obs["lightning_strike_last_at"] is None
         else:
             assert "lightning_strike_last_at" not in obs
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestFreshness:
+    async def test_observation_carries_retrieved_at(self, mock_ctx):
+        from mcp_server_tempest.server import _META_KEY
+
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = await get_observation(station_id=12345, ctx=mock_ctx)
+        assert result.structured_content["retrieved_at"] == result.meta[_META_KEY]["ts_retrieved"]
+
+    async def test_stations_carry_retrieved_at(self, mock_ctx):
+        with patch("mcp_server_tempest.server.api_get_stations", return_value=SAMPLE_STATION_DATA):
+            result = _structured(await get_stations(ctx=mock_ctx))
+        assert result["retrieved_at"].endswith("+00:00")
+
+    async def test_refresh_bypasses_cache(self, mock_ctx):
+        api = AsyncMock(return_value=SAMPLE_OBSERVATION_DATA)
+        with patch("mcp_server_tempest.server.api_get_observation", new=api):
+            await get_observation(station_id=12345, ctx=mock_ctx)
+            await get_observation(station_id=12345, ctx=mock_ctx)
+            assert api.await_count == 1  # second call was a cache hit
+            await get_observation(station_id=12345, refresh=True, ctx=mock_ctx)
+            assert api.await_count == 2
+
+    async def test_forecast_refresh_bypasses_cache(self, mock_ctx):
+        api = AsyncMock(return_value=SAMPLE_FORECAST_DATA)
+        with patch("mcp_server_tempest.server.api_get_forecast", new=api):
+            await get_forecast(station_id=12345, ctx=mock_ctx)
+            await get_forecast(station_id=12345, refresh=True, ctx=mock_ctx)
+        assert api.await_count == 2
+
+    async def test_refresh_during_outage_returns_error_not_stale_cache(self, mock_ctx):
+        # Review Focus #3.
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            new=AsyncMock(return_value=SAMPLE_OBSERVATION_DATA),
+        ):
+            await get_observation(station_id=12345, ctx=mock_ctx)
+        err = WeatherFlowError(code=ErrorCode.RATE_LIMITED, message="WeatherFlow rate limit hit.")
+        with patch("mcp_server_tempest.server.api_get_observation", new=AsyncMock(side_effect=err)):
+            result = await get_observation(station_id=12345, refresh=True, ctx=mock_ctx)
+        assert _error_payload(result)["code"] == "rate_limited"

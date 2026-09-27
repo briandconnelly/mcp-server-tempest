@@ -589,62 +589,93 @@ def _relaxed_schema(
 # and tempest_get_station_details genuinely returns it. Dropping the property
 # orphans the StationCapability definition, which _prune_unreferenced_defs
 # then removes from this schema only.
-_STATIONS_SCHEMA = _relaxed_schema(
-    StationsResponse,
-    {
-        "WeatherStation": {
-            "created_epoch",
-            "last_modified_epoch",
+_RETRIEVED_AT_SCHEMA: dict = {
+    "type": "string",
+    "format": "date-time",
+    "description": (
+        "RFC3339 UTC time this server fetched the data from WeatherFlow; it may "
+        "have been served from cache since. Omitted when unknown."
+    ),
+}
+
+
+def _with_retrieved_at(schema: dict) -> dict:
+    """Advertise the optional top-level `retrieved_at` a fetching tool adds."""
+    schema["properties"]["retrieved_at"] = dict(_RETRIEVED_AT_SCHEMA)
+    return schema
+
+
+def _stamp_retrieved_at(result: dict, fetched: Fetched) -> dict:
+    iso = _iso(fetched.ts_epoch)
+    if iso is not None:
+        result["retrieved_at"] = iso
+    return result
+
+
+_STATIONS_SCHEMA = _with_retrieved_at(
+    _relaxed_schema(
+        StationsResponse,
+        {
+            "WeatherStation": {
+                "created_epoch",
+                "last_modified_epoch",
+            },
+            "StationMeta": {"share_with_wf", "share_with_wu"},
+            "StationItem": {"station_item_id", "location_id", "location_item_id"},
         },
-        "StationMeta": {"share_with_wf", "share_with_wu"},
-        "StationItem": {"station_item_id", "location_id", "location_item_id"},
-    },
-    omitted_fields={"WeatherStation": {"capabilities"}},
+        omitted_fields={"WeatherStation": {"capabilities"}},
+    )
 )
 
-_STATION_SCHEMA = _relaxed_schema(
-    StationResponse,
-    {
-        "$root": {"created_epoch", "last_modified_epoch"},
-        "StationMeta": {"share_with_wf", "share_with_wu"},
-        "StationItem": {"station_item_id", "location_id", "location_item_id"},
-        "StationCapability": {"device_id", "agl", "show_precip_final"},
-    },
-)
-
-_FORECAST_SCHEMA = _relaxed_schema(
-    ForecastResponse,
-    {
-        "$root": {"latitude", "longitude", "timezone_offset_minutes"},
-        "CurrentConditions": {"icon"},
-        "DailyForecast": {"icon", "precip_icon"},
-        "HourlyForecast": {"icon"},
-    },
-)
-
-_OBSERVATION_SCHEMA = _relaxed_schema(
-    ObservationResponse,
-    {
-        "$root": {"outdoor_keys", "latitude", "longitude", "elevation", "is_public"},
-        "WeatherObservation": {
-            "barometric_pressure",
-            "station_pressure",
-            "heat_index",
-            "wind_chill",
-            "wet_bulb_temperature",
-            "wet_bulb_globe_temperature",
-            "delta_t",
-            "air_density",
-            "brightness",
-            "precip_accum_local_day_final",
-            "precip_accum_local_yesterday_final",
-            "precip_analysis_type_yesterday",
-            "precip_minutes_local_day",
-            "precip_minutes_local_yesterday",
-            "precip_minutes_local_yesterday_final",
-            "lightning_strike_last_at",
+_STATION_SCHEMA = _with_retrieved_at(
+    _relaxed_schema(
+        StationResponse,
+        {
+            "$root": {"created_epoch", "last_modified_epoch"},
+            "StationMeta": {"share_with_wf", "share_with_wu"},
+            "StationItem": {"station_item_id", "location_id", "location_item_id"},
+            "StationCapability": {"device_id", "agl", "show_precip_final"},
         },
-    },
+    )
+)
+
+_FORECAST_SCHEMA = _with_retrieved_at(
+    _relaxed_schema(
+        ForecastResponse,
+        {
+            "$root": {"latitude", "longitude", "timezone_offset_minutes"},
+            "CurrentConditions": {"icon"},
+            "DailyForecast": {"icon", "precip_icon"},
+            "HourlyForecast": {"icon"},
+        },
+    )
+)
+
+_OBSERVATION_SCHEMA = _with_retrieved_at(
+    _relaxed_schema(
+        ObservationResponse,
+        {
+            "$root": {"outdoor_keys", "latitude", "longitude", "elevation", "is_public"},
+            "WeatherObservation": {
+                "barometric_pressure",
+                "station_pressure",
+                "heat_index",
+                "wind_chill",
+                "wet_bulb_temperature",
+                "wet_bulb_globe_temperature",
+                "delta_t",
+                "air_density",
+                "brightness",
+                "precip_accum_local_day_final",
+                "precip_accum_local_yesterday_final",
+                "precip_analysis_type_yesterday",
+                "precip_minutes_local_day",
+                "precip_minutes_local_yesterday",
+                "precip_minutes_local_yesterday_final",
+                "lightning_strike_last_at",
+            },
+        },
+    )
 )
 
 
@@ -786,6 +817,9 @@ _CAPABILITY_CONTRACT: dict = {
         "(it may be omitted on some cache hits). tempest_get_capabilities is "
         "static — no upstream fetch or cache — so its _meta carries only "
         "{fingerprint, fingerprint_contract_version}."
+        " Results also carry `retrieved_at` (RFC3339 UTC) in structuredContent. "
+        "Pass refresh=true to tempest_get_observation or tempest_get_forecast to "
+        "bypass the cache; station data has no refresh argument."
     ),
 }
 
@@ -1270,7 +1304,7 @@ async def get_stations(
 
     async def _work() -> ToolResult:
         fetched = await _get_stations_data(ctx)
-        result = fetched.data.model_dump(exclude=_STATIONS_EXCLUDE)
+        result = _stamp_retrieved_at(fetched.data.model_dump(exclude=_STATIONS_EXCLUDE), fetched)
         return _validated("stations", result, _meta_for(fetched))
 
     return await _dispatch(_work)
@@ -1323,7 +1357,7 @@ async def get_station_details(
 
     async def _work() -> ToolResult:
         fetched = await _get_station_details_data(station_id, ctx)
-        result = fetched.data.model_dump(exclude=_STATION_EXCLUDE)
+        result = _stamp_retrieved_at(fetched.data.model_dump(exclude=_STATION_EXCLUDE), fetched)
         return _validated("station", result, _meta_for(fetched))
 
     return await _dispatch(_work)
@@ -1378,6 +1412,18 @@ async def get_forecast(
             ),
         ),
     ] = False,
+    refresh: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "If true, bypass the server's cache and fetch fresh data from "
+                "WeatherFlow. Omit to accept cached data up to "
+                "WEATHERFLOW_CACHE_TTL old (default 300s); `retrieved_at` says when "
+                "it was fetched."
+            ),
+        ),
+    ] = False,
     ctx: Context | None = None,
 ) -> ToolResult:
     """Get the weather forecast for a station — includes a current snapshot
@@ -1416,7 +1462,7 @@ async def get_forecast(
     """
 
     async def _work() -> ToolResult:
-        fetched = await _get_forecast_data(station_id, ctx)
+        fetched = await _get_forecast_data(station_id, ctx, use_cache=not refresh)
         result = fetched.data.model_dump(exclude=_FORECAST_EXCLUDE, exclude_none=not detailed)
 
         all_hourly = result["forecast"]["hourly"]
@@ -1484,6 +1530,7 @@ async def get_forecast(
         else:
             result.pop("truncation_hint", None)
 
+        result = _stamp_retrieved_at(result, fetched)
         return _validated("forecast", result, _meta_for(fetched))
 
     return await _dispatch(_work)
@@ -1512,6 +1559,18 @@ async def get_observation(
                 "air density, brightness, station/barometric pressure, final "
                 "precip totals) and station coordinates. Default is a condensed "
                 "summary."
+            ),
+        ),
+    ] = False,
+    refresh: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "If true, bypass the server's cache and fetch fresh data from "
+                "WeatherFlow. Omit to accept cached data up to "
+                "WEATHERFLOW_CACHE_TTL old (default 300s); `retrieved_at` says when "
+                "it was fetched."
             ),
         ),
     ] = False,
@@ -1550,7 +1609,7 @@ async def get_observation(
     """
 
     async def _work() -> ToolResult:
-        fetched = await _get_observation_data(station_id, ctx)
+        fetched = await _get_observation_data(station_id, ctx, use_cache=not refresh)
 
         if detailed:
             result = fetched.data.model_dump(exclude=_OBSERVATION_EXCLUDE)
@@ -1562,6 +1621,7 @@ async def get_observation(
             for key in ("latitude", "longitude", "elevation", "is_public"):
                 result.pop(key, None)
 
+        result = _stamp_retrieved_at(result, fetched)
         return _validated("observation", result, _meta_for(fetched))
 
     return await _dispatch(_work)
