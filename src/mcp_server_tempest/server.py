@@ -57,7 +57,7 @@ from fastmcp.resources import Resource
 from fastmcp.tools.base import Tool, ToolResult
 from fastmcp.utilities.json_schema import dereference_refs
 from jsonschema import Draft202012Validator
-from mcp.server.session import SUPPORTED_PROTOCOL_VERSIONS
+from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS, MODERN_PROTOCOL_VERSIONS
 from pydantic import BaseModel, Field
 
 from .cache import DiskCache
@@ -99,22 +99,28 @@ except PackageNotFoundError:
 _FINGERPRINT_CONTRACT_VERSION = 2
 
 # The MCP revision this server is authored and tested against, distinct from
-# what any given session negotiates. `accepted_revisions` is read from the SDK
-# rather than hardcoded so it cannot drift from what the server will actually
-# accept: the session handler echoes the client's requested revision when it is
-# supported and otherwise falls back to the SDK's latest. A plain import, so an
-# SDK that moves this constant fails loudly at import instead of letting the
-# server publish a revision list it does not honor.
-_AUTHORED_PROTOCOL_TARGET = "2025-11-25"
+# what any given connection negotiates. `accepted_revisions` is read from the
+# SDK rather than hardcoded so it cannot drift from what the server will
+# actually accept: the SDK serves every handshake-era revision (via
+# `initialize`) and every modern sessionless revision (via `server/discover`),
+# and offers no server-side way to narrow that set. A plain import, so an SDK
+# that moves these constants fails loudly at import instead of letting the
+# server publish a revision list it does not honor. 2025-11-25 (the newest
+# handshake revision) is covered by tests/test_legacy_protocol.py.
+_AUTHORED_PROTOCOL_TARGET = "2026-07-28"
+_ACCEPTED_PROTOCOL_REVISIONS = sorted((*HANDSHAKE_PROTOCOL_VERSIONS, *MODERN_PROTOCOL_VERSIONS))
 
 _MCP_PROTOCOL: dict = {
     "authored_target": _AUTHORED_PROTOCOL_TARGET,
-    "accepted_revisions": sorted(SUPPORTED_PROTOCOL_VERSIONS),
+    "accepted_revisions": _ACCEPTED_PROTOCOL_REVISIONS,
     "extensions": [],
     "negotiated_value_is_authoritative": (
-        "The per-session revision is whatever `initialize` returned in "
-        "InitializeResult.protocolVersion; this object declares the authored "
-        "target and the full accepted set, not the active session's revision."
+        "The revision in force is the one negotiated for the connection: on "
+        "sessionless revisions (2026-07-28 and later) the one agreed via "
+        "server/discover and carried on every request; on handshake-era "
+        "revisions the one `initialize` returned in "
+        "InitializeResult.protocolVersion. This object declares the authored "
+        "target and the full accepted set, not the active connection's revision."
     ),
 }
 
@@ -362,13 +368,14 @@ TRANSPORT: stdio. The packaged entry point `mcp-server-tempest` (e.g. via
 `uvx`) speaks MCP over stdio.
 
 PROTOCOL: authored and tested against MCP {protocol_target}; the server also
-accepts {accepted_revisions}. The revision in force for your session is
-whatever `initialize` returned in InitializeResult.protocolVersion — that
-value, not this line, is authoritative for the active session.
+accepts {accepted_revisions}. The revision in force is the one negotiated for
+your connection — via server/discover on sessionless revisions (2026-07-28 and
+later), or InitializeResult.protocolVersion on handshake-era revisions — and
+that value, not this line, is authoritative.
 """.format(
     version=_PKG_VERSION,
     protocol_target=_AUTHORED_PROTOCOL_TARGET,
-    accepted_revisions=", ".join(sorted(SUPPORTED_PROTOCOL_VERSIONS)),
+    accepted_revisions=", ".join(_ACCEPTED_PROTOCOL_REVISIONS),
 )
 
 # Create the MCP server

@@ -10,6 +10,7 @@ onto every tool's input/output schema so strict clients need not infer it.
 
 import logging
 
+from fastmcp.exceptions import ValidationError as FastMCPValidationError
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from pydantic import ValidationError
 
@@ -60,11 +61,23 @@ class TempestContractMiddleware(Middleware):
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         try:
             return await call_next(context)
+        except FastMCPValidationError as exc:
+            # FastMCP 4 wraps argument-validation failures in its own
+            # ValidationError with the Pydantic error as __cause__. Its message
+            # is the raw Pydantic text, which reflects the rejected input, so
+            # it must never reach the client unshaped.
+            if not isinstance(exc.__cause__, ValidationError):
+                raise
+            return self._invalid_argument(exc.__cause__)
         except ValidationError as exc:
-            rid = _new_request_id()
-            wfe = _validation_error_to_weatherflow(exc)
-            logger.warning("rid=%s code=%s field=%s", rid, wfe.code.value, wfe.field_name)
-            return wfe.to_tool_result(rid)
+            return self._invalid_argument(exc)
+
+    @staticmethod
+    def _invalid_argument(exc: ValidationError):
+        rid = _new_request_id()
+        wfe = _validation_error_to_weatherflow(exc)
+        logger.warning("rid=%s code=%s field=%s", rid, wfe.code.value, wfe.field_name)
+        return wfe.to_tool_result(rid)
 
     async def on_list_tools(self, context: MiddlewareContext, call_next):
         tools = await call_next(context)

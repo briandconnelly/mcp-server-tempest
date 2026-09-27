@@ -19,14 +19,16 @@ classifiers = [
 requires-python = ">=3.13"
 dependencies = [
     "cachetools>=6.1.0",
-    "fastmcp>=3.4,<4",
+    "fastmcp>=4.0.5,<5",
     # marshmallow is the parse-failure exception class we catch in rest.py
     # (raised by weatherflow4py via dataclasses-json). Declared directly so
     # we don't depend on the transitive dep surviving an upstream refactor.
     "jsonschema>=4.26.0",
     "marshmallow>=3.0",
+    "mcp>=2.2,<3",
+    "mcp-types>=2.2,<3",
     "platformdirs>=4.0",
-    "pydantic>=2.11.7",
+    "pydantic>=2.12",
     "weatherflow4py>=1.4.1",
 ]
 
@@ -63,3 +65,9 @@ select = ["E", "F", "I", "W"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# ctx.info still delivers log notifications on every protocol era; the SDK
+# warns only because the 2026-07-28 revision deprecates the *capability
+# declaration* (SEP-2577). Filter that one message, not the category.
+filterwarnings = [
+    "ignore:The logging capability is deprecated:mcp.shared.exceptions.MCPDeprecationWarning",
+]
