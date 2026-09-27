@@ -165,6 +165,15 @@ async def test_fingerprinted_resource_records_match_list_resources():
     assert hashed == live
 
 
+async def test_server_info_version_is_package_version():
+    from mcp_server_tempest.server import _PKG_VERSION, mcp
+
+    # Default (modern, sessionless) client path: identity comes from
+    # server/discover, so `initialize_result` is None here — use server_info.
+    async with fastmcp.Client(mcp) as c:
+        assert c.server_info.version == _PKG_VERSION
+
+
 async def test_fingerprint_stable_across_list_tools():
     """The middleware stamps $schema onto live component dicts when a client
     calls tools/list. _wire_tool_records applies the same stamp, so the

@@ -95,6 +95,19 @@ async def test_every_tool_succeeds(mode, tool, args):
 
 
 @pytest.mark.parametrize("mode", MODES)
+async def test_server_info_version_across_eras(mode):
+    from mcp_server_tempest.server import _PKG_VERSION
+
+    async with fastmcp.Client(mcp, mode=mode) as c:
+        if mode == "legacy":
+            # Handshake-era: access version from initialize_result
+            assert c.initialize_result.server_info.version == _PKG_VERSION
+        else:
+            # Sessionless/modern: access version from server_info
+            assert c.server_info.version == _PKG_VERSION
+
+
+@pytest.mark.parametrize("mode", MODES)
 async def test_invalid_argument_is_structured(mode):
     async with fastmcp.Client(mcp, mode=mode) as c:
         r = await c.call_tool_mcp("tempest_get_observation", {"station_id": -5})

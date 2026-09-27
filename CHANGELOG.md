@@ -139,6 +139,7 @@ selection guidance invalidate a cached surface.
   object describing the values; `station_units` is documented as preference
   only. The forecast description no longer claims station-configured units:
   read its `units` object.
+- Native serverInfo.version now reports the package version instead of FastMCP's.
 
 ## [0.10.0] - 2026-07-02
 

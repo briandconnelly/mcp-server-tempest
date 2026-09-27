@@ -382,6 +382,7 @@ that value, not this line, is authoritative.
 # Create the MCP server
 mcp = FastMCP(
     name="WeatherFlow Tempest",
+    version=_PKG_VERSION,
     instructions=_INSTRUCTIONS,
     lifespan=lifespan,
     on_duplicate="error",
