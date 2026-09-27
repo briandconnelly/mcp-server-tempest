@@ -2069,3 +2069,40 @@ class TestObservationUnits:
         readme = (Path(__file__).parent.parent / "README.md").read_text()
         assert "obs['station_units']['units_wind']" not in readme
         assert 'obs["station_units"]' not in readme
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestObservationTimes:
+    async def test_observed_at_is_rfc3339_utc(self, mock_ctx):
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = _structured(await get_observation(station_id=12345, ctx=mock_ctx))
+        assert result["obs"][0]["observed_at"] == "2023-11-14T22:13:20+00:00"
+
+    async def test_lightning_strike_last_at_when_recorded(self, mock_ctx):
+        obs = {
+            **_make_observation(),
+            "lightning_strike_last_epoch": 1699999000,
+            "lightning_strike_last_distance": 18,
+        }
+        data = {**SAMPLE_OBSERVATION_DATA, "obs": [obs]}
+        with patch("mcp_server_tempest.server.api_get_observation", return_value=data):
+            result = _structured(await get_observation(station_id=12345, ctx=mock_ctx))
+        assert result["obs"][0]["lightning_strike_last_at"] == "2023-11-14T21:56:40+00:00"
+
+    @pytest.mark.parametrize("detailed", [False, True])
+    async def test_no_lightning_validates_in_both_modes(self, mock_ctx, detailed):
+        # Review Focus #2: the fixture's lightning epoch is None.
+        with patch(
+            "mcp_server_tempest.server.api_get_observation",
+            return_value=SAMPLE_OBSERVATION_DATA,
+        ):
+            result = await get_observation(station_id=12345, detailed=detailed, ctx=mock_ctx)
+        assert result.is_error is not True
+        obs = result.structured_content["obs"][0]
+        if detailed:
+            assert obs["lightning_strike_last_at"] is None
+        else:
+            assert "lightning_strike_last_at" not in obs

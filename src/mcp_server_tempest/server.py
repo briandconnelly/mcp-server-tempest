@@ -642,6 +642,7 @@ _OBSERVATION_SCHEMA = _relaxed_schema(
             "precip_minutes_local_day",
             "precip_minutes_local_yesterday",
             "precip_minutes_local_yesterday_final",
+            "lightning_strike_last_at",
         },
     },
 )

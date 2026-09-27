@@ -1,6 +1,7 @@
+from datetime import UTC, datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 # Enums for better type safety
@@ -320,6 +321,23 @@ class WeatherObservation(BaseModel):
     wet_bulb_globe_temperature: float
     delta_t: float = Field(description="Delta T (difference between air temp and wet bulb temp)")
     air_density: float
+
+    @computed_field(description="RFC3339 UTC form of `timestamp`.")
+    @property
+    def observed_at(self) -> str:
+        return datetime.fromtimestamp(self.timestamp, tz=UTC).isoformat()
+
+    @computed_field(
+        description=(
+            "RFC3339 UTC form of `lightning_strike_last_epoch`; null (omitted in "
+            "summary mode) when no strike is recorded."
+        )
+    )
+    @property
+    def lightning_strike_last_at(self) -> str | None:
+        if self.lightning_strike_last_epoch is None:
+            return None
+        return datetime.fromtimestamp(self.lightning_strike_last_epoch, tz=UTC).isoformat()
 
 
 # Main Response Models

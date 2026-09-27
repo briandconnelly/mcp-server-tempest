@@ -27,6 +27,12 @@ selection guidance invalidate a cached surface.
   FastMCP error and returns the structured `invalid_argument` envelope as
   before.
 
+### Added
+
+- Observation entries carry `observed_at` and `lightning_strike_last_at`
+  (RFC3339 UTC) beside the raw epoch fields, so agents need not do epoch
+  arithmetic to answer "when" or "how long ago".
+
 ### Changed
 
 - **FastMCP 4 / MCP Python SDK v2.** Requires `fastmcp>=4.0.5,<5`, `mcp>=2.2,<3`,
