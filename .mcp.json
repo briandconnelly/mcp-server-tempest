@@ -2,7 +2,7 @@
   "mcpServers": {
     "mcp-server-tempest": {
       "command": "uvx",
-      "args": ["mcp-server-tempest==0.11.0"],
+      "args": ["mcp-server-tempest==0.12.0"],
       "env": {
         "WEATHERFLOW_API_TOKEN": "${WEATHERFLOW_API_TOKEN}",
         "WEATHERFLOW_DISK_CACHE_TTL": "${WEATHERFLOW_DISK_CACHE_TTL:-86400}",

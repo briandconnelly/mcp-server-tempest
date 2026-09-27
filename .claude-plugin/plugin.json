@@ -1,7 +1,7 @@
 {
   "name": "tempest",
   "description": "MCP server for accessing WeatherFlow Tempest personal weather station data",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "author": {
     "name": "Brian Connelly",
     "url": "https://github.com/briandconnelly"
