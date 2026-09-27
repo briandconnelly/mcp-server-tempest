@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-27
+
 Agent-friendliness review 3 (2026-09-27) findings F1–F7. F8 (drop per-tool
 Scope blocks) is not adopted: the station-scope line in every tool description
 is a deliberate, tested contract. F9 (`through_local_hour`) is declined: hourly
@@ -53,6 +55,11 @@ entries already carry `local_day`/`local_hour`.
   `tempest_get_station_details` adds each sensor's environment (F6).
 - `timezone_offset_minutes` is described as the offset at fetch time; use the
   IANA `timezone` for calculations (F7).
+- Forecast `station_id` is required in the published output schema.
+- Skills ask the user to choose among multiple stations instead of guessing
+  the "most recently active" one; `estimate-cloudiness`'s script rejects
+  non-positive `--pressure`.
+- CI lints and format-checks `skills/`.
 
 ## [0.11.0] - 2026-09-27
 
