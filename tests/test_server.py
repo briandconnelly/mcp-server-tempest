@@ -1262,6 +1262,52 @@ class TestStripTitles:
         assert _FORECAST_SCHEMA["properties"]["truncation_hint"]["description"]
 
 
+# -- Tests for output schema examples stripping (F3) --
+
+
+class TestStripExamples:
+    """Pydantic copies ``Field(examples=[...])`` into the published output
+    schema; examples carry no validation semantics and cost bytes on every
+    ``tools/list``. A property literally named ``examples`` must survive."""
+
+    def test_strips_examples_keyword_but_keeps_property_named_examples(self):
+        from mcp_server_tempest.server import _strip_examples
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "examples": ["Seattle"]},
+                "examples": {"type": "array", "items": {"type": "string"}},
+            },
+        }
+        _strip_examples(schema)
+        assert "examples" not in schema["properties"]["name"]
+        assert schema["properties"]["examples"] == {"type": "array", "items": {"type": "string"}}
+
+    def test_published_output_schemas_carry_no_examples(self):
+        for s in (_STATIONS_SCHEMA, _STATION_SCHEMA, _FORECAST_SCHEMA, _OBSERVATION_SCHEMA):
+            assert all(not isinstance(d.get("examples"), list) for d in _walk_all_dicts(s))
+
+
+# Serialized tools/list budget, compact UTF-8 JSON of the Tool records as the
+# client receives them. Measured after review-2 fixes; raise it deliberately,
+# with the new measurement, when a change genuinely needs the bytes.
+# Measured 32132 bytes, 2026-09-27 (rounded up to the next multiple of 250).
+TOOLS_LIST_BUDGET_BYTES = 32250
+
+
+async def test_tools_list_stays_within_measured_budget():
+    import fastmcp
+
+    async with fastmcp.Client(mcp) as c:
+        records = [
+            t.model_dump(exclude_none=True, mode="json", by_alias=True)
+            for t in await c.list_tools()
+        ]
+    size = len(json.dumps(records, separators=(",", ":")).encode())
+    assert size <= TOOLS_LIST_BUDGET_BYTES, f"tools/list is {size} bytes"
+
+
 # -- Tests for output schema additionalProperties lockdown --
 
 

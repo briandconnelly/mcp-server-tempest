@@ -39,6 +39,10 @@ selection guidance invalidate a cached surface.
 
 ### Changed
 
+- Output schemas no longer carry `examples` keywords (validation-neutral,
+  smaller `tools/list`); a test now pins the serialized `tools/list` size so
+  catalog growth is a deliberate decision.
+
 - **Error envelope: `next` is replaced by a callable `repair` object
   (breaking, pre-1.0).** `repair` is `{next_step, tool, arguments}`: call
   `tool` with `arguments` exactly. `invalid_argument` errors now carry a repair

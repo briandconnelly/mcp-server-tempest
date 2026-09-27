@@ -483,6 +483,25 @@ def _strip_titles(obj: Any) -> None:
             _strip_titles(item)
 
 
+def _strip_examples(obj: Any) -> None:
+    """Recursively delete every JSON Schema ``examples`` *keyword*.
+
+    Pydantic copies ``Field(examples=[...])`` into the published output
+    schema; examples carry no validation semantics and cost bytes on every
+    ``tools/list`` (measured 482 bytes, 2026-09-27). The keyword's value is a
+    list, so guarding on ``list`` preserves a property literally named
+    ``examples`` (whose value is a schema dict).
+    """
+    if isinstance(obj, dict):
+        if isinstance(obj.get("examples"), list):
+            del obj["examples"]
+        for value in obj.values():
+            _strip_examples(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            _strip_examples(item)
+
+
 def _refs_in(obj: Any) -> set[str]:
     """Every ``#/$defs/<name>`` target referenced anywhere under ``obj``.
 
@@ -587,6 +606,7 @@ def _relaxed_schema(
 
     _prune_unreferenced_defs(schema)
     _strip_titles(schema)
+    _strip_examples(schema)
     _lock_additional_properties(schema)
 
     # Stamp the dialect at generation time (not only via the on_list_tools
