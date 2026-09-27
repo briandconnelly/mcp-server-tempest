@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Agent-friendliness review 3 (2026-09-27) findings F1–F7. F8 (drop per-tool
+Scope blocks) is not adopted: the station-scope line in every tool description
+is a deliberate, tested contract. F9 (`through_local_hour`) is declined: hourly
+entries already carry `local_day`/`local_hour`.
+
+### Added
+
+- Forecast results carry RFC3339 UTC twins of their epoch times:
+  `day_start_at`, `sunrise_at`, `sunset_at` on daily entries, `starts_at` on
+  hourly entries, and `observed_at` and `lightning_strike_last_at` on
+  `current_conditions` (F2).
+- Forecast results echo `station_id` (F1).
+- Observation entries carry `wind_direction_cardinal` (16-point compass), in
+  both summary and detailed modes (F5).
+
+### Changed
+
+- The forecast description, `units` description, instructions, and
+  capabilities now say the forecast has no `station_units` and point to
+  `tempest_get_observation` for the owner's preferred units (F1).
+- Freshness guidance leads with `retrieved_at` and notes that some clients do
+  not show `_meta` to the model (F3).
+- `tempest_get_observation` recommends `detailed=true` whenever an answer needs
+  a secondary metric (e.g. delta-T for spray safety), not only when the user
+  names it; the `detailed` parameter now lists WBGT and delta-T (F4).
+- Station descriptions and instructions say `station_items` from
+  `tempest_get_stations` usually answers "what can my station measure";
+  `tempest_get_station_details` adds each sensor's environment (F6).
+- `timezone_offset_minutes` is described as the offset at fetch time; use the
+  IANA `timezone` for calculations (F7).
+
 ## [0.11.0] - 2026-09-27
 
 Fixes a critical units mislabel in `tempest_get_observation`; see Fixed.

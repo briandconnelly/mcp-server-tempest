@@ -20,6 +20,7 @@ from mcp_server_tempest.models import (
     Units,
     WeatherObservation,
     WeatherStation,
+    _cardinal,
 )
 
 
@@ -319,3 +320,45 @@ class TestObservationResponse:
             status={"status_code": 0, "status_message": "SUCCESS"},
         )
         assert resp.station_id == 12345
+
+
+class TestCardinal:
+    @pytest.mark.parametrize(
+        ("degrees", "expected"),
+        [
+            (0, "N"),
+            (360, "N"),
+            (11.24, "N"),
+            (11.25, "NNE"),
+            (348.75, "N"),
+            (348.74, "NNW"),
+            (22.5, "NNE"),
+            (33.75, "NE"),
+            (90, "E"),
+            (180, "S"),
+            (270, "W"),
+            (350, "N"),
+        ],
+    )
+    def test_sixteen_point_sectors(self, degrees, expected):
+        assert _cardinal(degrees) == expected
+
+
+class TestForecastTimes:
+    def test_daily_rfc3339_twins(self):
+        day = DailyForecast(
+            air_temp_high=18,
+            air_temp_low=10,
+            day_num=27,
+            day_start_local=1790492400,
+            month_num=9,
+            icon="clear-day",
+            conditions="Clear",
+            precip_probability=0,
+            sunrise=1790517806,
+            sunset=1790560568,
+        )
+        dumped = day.model_dump()
+        assert dumped["day_start_at"] == "2026-09-27T07:00:00+00:00"
+        assert dumped["sunrise_at"] == "2026-09-27T14:03:26+00:00"
+        assert dumped["sunset_at"] == "2026-09-28T01:56:08+00:00"

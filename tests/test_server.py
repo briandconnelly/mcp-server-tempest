@@ -1293,7 +1293,10 @@ class TestStripExamples:
 # client receives them. Measured after review-2 fixes; raise it deliberately,
 # with the new measurement, when a change genuinely needs the bytes.
 # Measured 32132 bytes, 2026-09-27 (rounded up to the next multiple of 250).
-TOOLS_LIST_BUDGET_BYTES = 32250
+# Review 3 (same day) added forecast RFC3339 `*_at` twins, observation
+# wind_direction_cardinal, and forecast station_id to the output schemas:
+# measured 34306 bytes.
+TOOLS_LIST_BUDGET_BYTES = 34500
 
 
 async def test_tools_list_stays_within_measured_budget():
@@ -1506,6 +1509,13 @@ class TestServerInstructions:
         assert mcp.instructions
         assert isinstance(mcp.instructions, str)
         assert len(mcp.instructions) > 200
+
+    def test_required_and_tool_selection_survive_client_truncation(self):
+        # Claude Code cuts server instructions at 2048 characters (observed
+        # 2026-09-27: the text ended right after "USE THIS SERVER when the
+        # user asks about:"). REQUIRED and TOOL SELECTION must fit before it.
+        text = mcp.instructions
+        assert text.index("USE THIS SERVER") <= 2048
 
     def test_instructions_lists_each_tool(self):
         text = mcp.instructions
@@ -2231,3 +2241,49 @@ class TestFreshness:
         with patch("mcp_server_tempest.server.api_get_observation", new=AsyncMock(side_effect=err)):
             result = await get_observation(station_id=12345, refresh=True, ctx=mock_ctx)
         assert _error_payload(result)["code"] == "rate_limited"
+
+
+@pytest.mark.usefixtures("_set_token")
+class TestReview3Fields:
+    @pytest.mark.parametrize("detailed", [False, True])
+    async def test_forecast_carries_rfc3339_twins_and_station_id(self, mock_ctx, detailed):
+        with patch("mcp_server_tempest.server.api_get_forecast", return_value=SAMPLE_FORECAST_DATA):
+            result = await get_forecast(station_id=12345, detailed=detailed, ctx=mock_ctx)
+        assert result.is_error is not True
+        data = result.structured_content
+        assert data["station_id"] == 12345
+        day = data["forecast"]["daily"][0]
+        assert day["sunrise_at"] == "2023-11-14T22:13:20+00:00"
+        assert day["sunset_at"] == "2023-11-15T09:20:00+00:00"
+        assert day["day_start_at"] == "2023-11-14T22:13:20+00:00"
+        assert data["forecast"]["hourly"][1]["starts_at"] == "2023-11-14T23:13:20+00:00"
+        current = data["current_conditions"]
+        assert current["observed_at"] == "2023-11-14T22:13:20+00:00"
+        # The fixture records no strike: null in detailed, omitted in summary.
+        if detailed:
+            assert current["lightning_strike_last_at"] is None
+        else:
+            assert "lightning_strike_last_at" not in current
+
+    async def test_forecast_lightning_strike_last_at_when_recorded(self, mock_ctx):
+        data = {
+            **SAMPLE_FORECAST_DATA,
+            "current_conditions": {
+                **SAMPLE_CURRENT_CONDITIONS,
+                "lightning_strike_last_epoch": 1699999000,
+            },
+        }
+        with patch("mcp_server_tempest.server.api_get_forecast", return_value=data):
+            result = _structured(await get_forecast(station_id=12345, ctx=mock_ctx))
+        assert result["current_conditions"]["lightning_strike_last_at"] == (
+            "2023-11-14T21:56:40+00:00"
+        )
+
+    @pytest.mark.parametrize("detailed", [False, True])
+    async def test_observation_carries_wind_direction_cardinal(self, mock_ctx, detailed):
+        obs = {**_make_observation(), "wind_direction": 350}
+        data = {**SAMPLE_OBSERVATION_DATA, "obs": [obs]}
+        with patch("mcp_server_tempest.server.api_get_observation", return_value=data):
+            result = await get_observation(station_id=12345, detailed=detailed, ctx=mock_ctx)
+        assert result.is_error is not True
+        assert result.structured_content["obs"][0]["wind_direction_cardinal"] == "N"
