@@ -42,7 +42,7 @@ import json
 import logging
 import os
 import traceback
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -269,7 +269,7 @@ def _get_disk_cache() -> DiskCache | None:
 
 
 @asynccontextmanager
-async def lifespan(server: FastMCP) -> AsyncIterator[None]:
+async def lifespan(server: FastMCP) -> AsyncGenerator[None]:
     """Validate configuration on startup and pre-warm caches."""
     token = os.getenv("WEATHERFLOW_API_TOKEN")
     if not token:
