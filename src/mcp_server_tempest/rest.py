@@ -1,6 +1,6 @@
 import json
 import math
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
@@ -23,7 +23,7 @@ _REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT_SECONDS)
 
 
 @asynccontextmanager
-async def _api_session(token: str) -> AsyncIterator[Any]:
+async def _api_session(token: str) -> AsyncGenerator[Any]:
     """Yield a WeatherFlowRestAPI bound to a timeout-scoped session we own.
 
     The session is created and closed here (weatherflow4py won't close a

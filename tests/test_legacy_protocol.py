@@ -116,3 +116,33 @@ async def test_invalid_argument_is_structured(mode):
     assert payload["code"] == "invalid_argument"
     assert payload["field"] == "station_id"
     assert r.structured_content == payload
+
+
+async def _cache_hinted_results(c):
+    return {
+        "tools/list": await c.list_tools_mcp(),
+        "resources/list": await c.list_resources_mcp(),
+        "resources/templates/list": await c.list_resource_templates_mcp(),
+        "resources/read": await c.read_resource_mcp("tempest://capabilities"),
+    }
+
+
+async def test_modern_era_sends_public_cache_hint():
+    """SEP-2549: list and resource-read results carry the configured hint."""
+    from mcp_server_tempest.server import _LIST_CACHE_TTL_SECONDS
+
+    async with fastmcp.Client(mcp, mode="auto") as c:
+        results = await _cache_hinted_results(c)
+    for method, r in results.items():
+        assert r.ttl_ms == _LIST_CACHE_TTL_SECONDS * 1000, method
+        assert r.cache_scope == "public", method
+
+
+async def test_handshake_era_has_no_cache_hint():
+    """2025-11-25 has no ttlMs/cacheScope on the wire; the client sees the
+    'do not reuse' default."""
+    async with fastmcp.Client(mcp, mode="legacy") as c:
+        results = await _cache_hinted_results(c)
+    for method, r in results.items():
+        assert r.ttl_ms == 0, method
+        assert r.cache_scope == "private", method

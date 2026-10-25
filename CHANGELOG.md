@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tools/list`, `resources/list`, `resources/templates/list` and
+  `resources/read` results carry a SEP-2549 cache freshness hint on
+  2026-07-28 and later (`ttlMs=3600000`, `cacheScope="public"`), replacing the
+  "do not reuse" default (#122). None of these change while the server runs;
+  tool-call results stay uncacheable. The hint is described in the
+  instructions and in the capability contract's `caching` section, so the
+  capability fingerprint changes.
+
+### Removed
+
+- Advisory client log notifications (`ctx.info`: fetch started, cache hits)
+  are no longer sent; SEP-2577 deprecates MCP client logging. The same events
+  are logged at DEBUG to the server's stderr logger. Clients on 2025-11-25 and
+  earlier lose these messages; nothing in the tool contract depended on them.
+  Progress notifications (`ctx.report_progress`) are unchanged (#122).
+
 ## [0.12.0] - 2026-09-27
 
 Agent-friendliness review 3 (2026-09-27) findings F1–F7. F8 (drop per-tool

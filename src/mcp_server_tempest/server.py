@@ -42,7 +42,7 @@ import json
 import logging
 import os
 import traceback
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -109,6 +109,11 @@ _FINGERPRINT_CONTRACT_VERSION = 2
 # handshake revision) is covered by tests/test_legacy_protocol.py.
 _AUTHORED_PROTOCOL_TARGET = "2026-07-28"
 _ACCEPTED_PROTOCOL_REVISIONS = sorted((*HANDSHAKE_PROTOCOL_VERSIONS, *MODERN_PROTOCOL_VERSIONS))
+
+# Freshness hint (SEP-2549 ttlMs/cacheScope) sent on list and resource-read
+# results. Tool results are never cacheable; each carries the fingerprint in
+# _meta, so a client holding a stale list can detect it.
+_LIST_CACHE_TTL_SECONDS = 3600
 
 _MCP_PROTOCOL: dict = {
     "authored_target": _AUTHORED_PROTOCOL_TARGET,
@@ -269,7 +274,7 @@ def _get_disk_cache() -> DiskCache | None:
 
 
 @asynccontextmanager
-async def lifespan(server: FastMCP) -> AsyncIterator[None]:
+async def lifespan(server: FastMCP) -> AsyncGenerator[None]:
     """Validate configuration on startup and pre-warm caches."""
     token = os.getenv("WEATHERFLOW_API_TOKEN")
     if not token:
@@ -362,6 +367,9 @@ AMBIENT STATE (affects freshness and cache repair):
 - refresh=true bypasses the cache for observation/forecast. Station data has
   no refresh argument: restart the server (clears in-memory) or delete the
   cache directory above (clears disk).
+- tools/list, resources/list, resources/templates/list and resources/read
+  results carry a public cache hint (ttlMs={list_ttl_ms}) on 2026-07-28 and
+  later. Tool-call results are never cacheable.
 
 TYPICAL WORKFLOW:
 1. tempest_get_stations (skip if you already hold a station_id).
@@ -395,6 +403,7 @@ END OF TEMPEST INSTRUCTIONS
     version=_PKG_VERSION,
     protocol_target=_AUTHORED_PROTOCOL_TARGET,
     accepted_revisions=", ".join(_ACCEPTED_PROTOCOL_REVISIONS),
+    list_ttl_ms=_LIST_CACHE_TTL_SECONDS * 1000,
 )
 
 # Create the MCP server
@@ -404,6 +413,11 @@ mcp = FastMCP(
     instructions=_INSTRUCTIONS,
     lifespan=lifespan,
     on_duplicate="error",
+    # SEP-2549 freshness hint on tools/list, resources/list,
+    # resources/templates/list and resources/read. None of these change while
+    # the process runs, and tempest://capabilities holds no per-user data.
+    cache_ttl=_LIST_CACHE_TTL_SECONDS,
+    cache_scope="public",
 )
 mcp.add_middleware(TempestContractMiddleware())
 
@@ -879,6 +893,11 @@ _CAPABILITY_CONTRACT: dict = {
         "use it for data age, since some clients do not show _meta to the model. "
         "Pass refresh=true to tempest_get_observation or tempest_get_forecast to "
         "bypass the cache; station data has no refresh argument."
+        " On 2026-07-28 and later, tools/list, resources/list, "
+        "resources/templates/list and resources/read results carry the cache "
+        f"hint ttlMs={_LIST_CACHE_TTL_SECONDS * 1000}, cacheScope=public: none "
+        "of them change while the server runs. Tool-call results are never "
+        "cacheable."
     ),
 }
 
@@ -1187,20 +1206,10 @@ _OBSERVATION_SUMMARY_FIELDS: set[str] = {
 }
 
 
-async def _notify_info(ctx: Context | None, message: str) -> None:
-    """Best-effort ctx.info. Progress/log notifications are advisory: a send
-    failure (no client log capability, transport hiccup, disconnect) must never
-    turn an otherwise-successful fetch into an internal_error."""
-    if ctx is None:
-        return
-    try:
-        await ctx.info(message)
-    except Exception as exc:  # noqa: BLE001 - advisory notification, never fatal
-        logger.debug("ctx.info notification dropped: %s", exc)
-
-
 async def _notify_progress(ctx: Context | None, *, progress: float, total: float) -> None:
-    """Best-effort ctx.report_progress; see _notify_info for the rationale."""
+    """Best-effort ctx.report_progress. Progress notifications are advisory: a
+    send failure (transport hiccup, disconnect) must never turn an
+    otherwise-successful fetch into an internal_error."""
     if ctx is None:
         return
     try:
@@ -1216,7 +1225,7 @@ async def _get_stations_data(
     token = _get_api_token()
 
     if use_cache and "stations" in cache:
-        await _notify_info(ctx, "Using cached station data")
+        logger.debug("Using cached station data")
         return Fetched(cache["stations"], "memory", _fetch_times.get("stations"))
 
     dc = _get_disk_cache()
@@ -1224,13 +1233,13 @@ async def _get_stations_data(
         hit = dc.get_with_age("stations", StationsResponse)
         if hit is not None:
             model, ts = hit
-            await _notify_info(ctx, "Using disk-cached station data")
+            logger.debug("Using disk-cached station data")
             cache["stations"] = model
             _fetch_times["stations"] = ts
             return Fetched(model, "disk", ts)
 
     await _notify_progress(ctx, progress=0, total=1)
-    await _notify_info(ctx, "Getting available stations via the Tempest API")
+    logger.debug("Getting available stations via the Tempest API")
     result = await api_get_stations(token)
     cache["stations"] = StationsResponse(**result)
     _fetch_times["stations"] = _now()
@@ -1249,7 +1258,7 @@ async def _get_station_details_data(
     cache_id = f"station_id_{station_id}"
 
     if use_cache and cache_id in cache:
-        await _notify_info(ctx, f"Using cached station data for station {station_id}")
+        logger.debug("Using cached station data for station %s", station_id)
         return Fetched(cache[cache_id], "memory", _fetch_times.get(cache_id))
 
     dc = _get_disk_cache()
@@ -1257,13 +1266,13 @@ async def _get_station_details_data(
         hit = dc.get_with_age(cache_id, StationResponse)
         if hit is not None:
             model, ts = hit
-            await _notify_info(ctx, f"Using disk-cached station data for station {station_id}")
+            logger.debug("Using disk-cached station data for station %s", station_id)
             cache[cache_id] = model
             _fetch_times[cache_id] = ts
             return Fetched(model, "disk", ts)
 
     await _notify_progress(ctx, progress=0, total=1)
-    await _notify_info(ctx, f"Getting station ID data for station {station_id} via the Tempest API")
+    logger.debug("Getting station ID data for station %s via the Tempest API", station_id)
     result = await api_get_station_id(station_id, token)
     cache[cache_id] = StationResponse(**result)
     _fetch_times[cache_id] = _now()
@@ -1281,11 +1290,11 @@ async def _get_forecast_data(
 
     cache_id = f"forecast_{station_id}"
     if use_cache and cache_id in cache:
-        await _notify_info(ctx, f"Using cached forecast data for station {station_id}")
+        logger.debug("Using cached forecast data for station %s", station_id)
         return Fetched(cache[cache_id], "memory", _fetch_times.get(cache_id))
 
     await _notify_progress(ctx, progress=0, total=1)
-    await _notify_info(ctx, f"Getting forecast for station {station_id} via the Tempest API")
+    logger.debug("Getting forecast for station %s via the Tempest API", station_id)
     result = await api_get_forecast(station_id, token)
     cache[cache_id] = ForecastResponse(**result, station_id=station_id)
     _fetch_times[cache_id] = _now()
@@ -1301,11 +1310,11 @@ async def _get_observation_data(
 
     cache_id = f"observation_{station_id}"
     if use_cache and cache_id in cache:
-        await _notify_info(ctx, f"Using cached observation data for station {station_id}")
+        logger.debug("Using cached observation data for station %s", station_id)
         return Fetched(cache[cache_id], "memory", _fetch_times.get(cache_id))
 
     await _notify_progress(ctx, progress=0, total=1)
-    await _notify_info(ctx, f"Getting observations for station {station_id} via the Tempest API")
+    logger.debug("Getting observations for station %s via the Tempest API", station_id)
     result = await api_get_observation(station_id, token)
     cache[cache_id] = ObservationResponse(**result)
     _fetch_times[cache_id] = _now()
