@@ -1,6 +1,7 @@
 """Tests for server logic."""
 
 import json
+import logging
 import os
 from unittest.mock import AsyncMock, patch
 
@@ -328,11 +329,14 @@ class TestGetStationsData:
             mock_ctx.report_progress.assert_any_call(progress=0, total=1)
             mock_ctx.report_progress.assert_any_call(progress=1, total=1)
 
-    async def test_returns_cached_data(self, mock_ctx):
+    async def test_returns_cached_data(self, mock_ctx, caplog):
         cache["stations"] = "cached_value"
-        result = (await _get_stations_data(mock_ctx, use_cache=True)).data
+        with caplog.at_level(logging.DEBUG, logger="mcp_server_tempest.server"):
+            result = (await _get_stations_data(mock_ctx, use_cache=True)).data
         assert result == "cached_value"
-        mock_ctx.info.assert_called_with("Using cached station data")
+        # Fetch events go to the stderr logger, not client logging (SEP-2577).
+        assert "Using cached station data" in caplog.messages
+        mock_ctx.info.assert_not_called()
 
     async def test_bypass_cache(self, mock_ctx):
         cache["stations"] = "stale"
@@ -479,10 +483,9 @@ class TestTools:
         assert payload["request_id"] in payload["hint"]
 
     async def test_notification_failure_does_not_fail_tool(self, mock_ctx):
-        """A4: progress/log notifications are advisory. A send failure must not
+        """A4: progress notifications are advisory. A send failure must not
         turn a successful fetch into an internal_error."""
         mock_ctx.report_progress.side_effect = RuntimeError("client disconnected")
-        mock_ctx.info.side_effect = RuntimeError("client disconnected")
         with patch(
             "mcp_server_tempest.server.api_get_stations",
             return_value=SAMPLE_STATION_DATA,
@@ -542,7 +545,6 @@ class TestTools:
         """A4: notification failure on the fetch path must not fail get_forecast
         (covers the post-fetch report_progress call site)."""
         mock_ctx.report_progress.side_effect = RuntimeError("client disconnected")
-        mock_ctx.info.side_effect = RuntimeError("client disconnected")
         with patch(
             "mcp_server_tempest.server.api_get_forecast",
             return_value=SAMPLE_FORECAST_DATA,
@@ -554,7 +556,6 @@ class TestTools:
         """A4: notification failure on the fetch path must not fail
         get_observation (covers the post-fetch report_progress call site)."""
         mock_ctx.report_progress.side_effect = RuntimeError("client disconnected")
-        mock_ctx.info.side_effect = RuntimeError("client disconnected")
         with patch(
             "mcp_server_tempest.server.api_get_observation",
             return_value=SAMPLE_OBSERVATION_DATA,
@@ -1865,7 +1866,7 @@ class TestToolErrorPassthrough:
 
 @pytest.mark.usefixtures("_set_token")
 class TestDiskCacheIntegration:
-    async def test_stations_falls_back_to_disk_cache(self, tmp_path, mock_ctx, monkeypatch):
+    async def test_stations_falls_back_to_disk_cache(self, tmp_path, mock_ctx, monkeypatch, caplog):
         monkeypatch.setattr(
             "mcp_server_tempest.cache.user_cache_dir",
             lambda app_name: str(tmp_path),
@@ -1876,10 +1877,14 @@ class TestDiskCacheIntegration:
         stations_data = StationsResponse(**SAMPLE_STATION_DATA)
         dc.set("stations", stations_data)
 
-        with patch.object(server_module, "_get_disk_cache", return_value=dc):
+        with (
+            patch.object(server_module, "_get_disk_cache", return_value=dc),
+            caplog.at_level(logging.DEBUG, logger="mcp_server_tempest.server"),
+        ):
             result = (await _get_stations_data(mock_ctx, use_cache=True)).data
             assert result.stations[0].station_id == 12345
-            mock_ctx.info.assert_called_with("Using disk-cached station data")
+            assert "Using disk-cached station data" in caplog.messages
+            mock_ctx.info.assert_not_called()
 
     async def test_stations_api_writes_to_disk_cache(self, tmp_path, mock_ctx, monkeypatch):
         monkeypatch.setattr(
@@ -1903,7 +1908,9 @@ class TestDiskCacheIntegration:
         assert cached is not None
         assert cached.stations[0].station_id == 12345
 
-    async def test_station_id_falls_back_to_disk_cache(self, tmp_path, mock_ctx, monkeypatch):
+    async def test_station_id_falls_back_to_disk_cache(
+        self, tmp_path, mock_ctx, monkeypatch, caplog
+    ):
         monkeypatch.setattr(
             "mcp_server_tempest.cache.user_cache_dir",
             lambda app_name: str(tmp_path),
@@ -1914,10 +1921,14 @@ class TestDiskCacheIntegration:
         station_data = StationResponse(**SAMPLE_SINGLE_STATION_DATA)
         dc.set("station_id_12345", station_data)
 
-        with patch.object(server_module, "_get_disk_cache", return_value=dc):
+        with (
+            patch.object(server_module, "_get_disk_cache", return_value=dc),
+            caplog.at_level(logging.DEBUG, logger="mcp_server_tempest.server"),
+        ):
             result = (await _get_station_details_data(12345, mock_ctx, use_cache=True)).data
             assert result.station_id == 12345
-            mock_ctx.info.assert_called_with("Using disk-cached station data for station 12345")
+            assert "Using disk-cached station data for station 12345" in caplog.messages
+            mock_ctx.info.assert_not_called()
 
 
 # -- Tests for _dispatch helper --
